@@ -47,14 +47,17 @@ def export_ocr(ckpt: Path, out: Path, opset: int) -> None:
             return self.m.infer_logits(x)  # (B, T, C) logits
 
     out.parent.mkdir(parents=True, exist_ok=True)
+    wrapped = _InferWrapper(model)
+    wrapped.eval()
+    # Torch 2.11 defaults to the dynamo exporter, which cannot trace BiLSTM + CTC.
     torch.onnx.export(
-        _InferWrapper(model),
+        wrapped,
         dummy,
         str(out),
         input_names=["image"],
         output_names=["logits"],
         opset_version=opset,
-        dynamic_axes={"image": {0: "batch", 3: "width"}, "logits": {0: "batch", 1: "time"}},
+        dynamo=False,
     )
     print(f"Wrote {out}")
 

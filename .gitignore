@@ -28,6 +28,8 @@ datasets/annotations/metadata.jsonl
 datasets/annotations/ocr/*
 datasets/annotations/plates/*
 datasets/annotations/vehicles/*
+datasets/.last_train_manifest
+hf_export/
 !datasets/**/.gitkeep
 
 # Notebooks

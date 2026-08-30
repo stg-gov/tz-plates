@@ -1,5 +1,5 @@
-.PHONY: help install install-train test lint api synth prepare train-ocr pretrain-ocr \
-        train-detector train-vehicle-detector evaluate export bench docker video
+.PHONY: help install install-train test lint api synth prepare analyze train-ocr pretrain-ocr \
+        train-detector train-vehicle-detector evaluate export bench docker video retrain hf-pack
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-16s %s\n", $$1, $$2}'
@@ -25,11 +25,20 @@ synth:             ## generate synthetic Tanzanian plates for OCR pretraining
 prepare:           ## build OCR crops + splits from labeled_images/ + labels.jsonl
 	python tools/prepare_dataset.py --workers 8
 
+analyze:           ## write reports/dataset_analysis.md from current labels + crops
+	python tools/analyze_dataset.py
+
 pretrain-ocr:      ## stage 1: pretrain OCR on synthetic only
 	python training/train_ocr.py --stage pretrain
 
 train-ocr:         ## stage 2: fine-tune OCR on real crops
-	python training/train_ocr.py --stage finetune --init models/ocr/v1/ocr_crnn_pretrained.pt
+	python training/train_ocr.py --stage finetune --init models/ocr/v1/ocr_pretrained.pt
+
+retrain:           ## recrop + fine-tune when new labelled photos are added
+	bash scripts/retrain.sh
+
+hf-pack:           ## assemble hf_export/tz-alpr-ocr for the Hub
+	python tools/package_hf_model.py
 
 train-detector:    ## train the YOLO plate detector (needs verified boxes)
 	python training/train_plate_detector.py

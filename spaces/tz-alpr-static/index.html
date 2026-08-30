@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tz-alpr — Tanzanian plates · Japhari</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;800&family=IBM+Plex+Mono:wght@600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.min.js"></script>
+  <style>
+    :root {
+      --green: #1eb53a;
+      --yellow: #fcd116;
+      --blue: #00a3dd;
+      --ink: #0f1720;
+      --muted: #5b6670;
+      --card: #ffffff;
+      --bg: #f4f7f2;
+      --danger: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "DM Sans", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    .stripe {
+      height: 8px;
+      background: linear-gradient(90deg, var(--green) 0 33%, var(--yellow) 33% 66%, var(--blue) 66%);
+    }
+    header, main, footer {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    header { padding-top: 36px; }
+    .flag { font-size: 1.8rem; }
+    h1 { font-size: clamp(2rem, 5vw, 3rem); margin: 6px 0 8px; letter-spacing: -0.03em; }
+    .lead { font-size: 1.08rem; color: var(--muted); max-width: 40rem; margin: 0 0 18px; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.92rem;
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--yellow);
+    }
+    .dot.ready { background: var(--green); }
+    .dot.err { background: var(--danger); }
+    .layout {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 18px;
+      padding-bottom: 28px;
+    }
+    @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
+    .card {
+      background: var(--card);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 1px 0 rgba(15,23,32,0.06), 0 12px 32px rgba(15,23,32,0.05);
+    }
+    .drop {
+      border: 2px dashed #c5d0c4;
+      border-radius: 12px;
+      min-height: 280px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      color: var(--muted);
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      background: #fafcf8;
+    }
+    .drop.drag { border-color: var(--green); background: #eefae9; }
+    .drop canvas, .drop img.preview {
+      max-width: 100%;
+      max-height: 420px;
+      display: block;
+    }
+    .drop .hint { padding: 24px; }
+    input[type=file] { display: none; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    button, .ex {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-weight: 700;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    button.primary { background: var(--green); color: #fff; }
+    button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.ghost { background: var(--ink); color: #fff; }
+    .ex {
+      background: #fff;
+      border: 1px solid #d7ddd4;
+      color: var(--ink);
+      font-size: 0.88rem;
+    }
+    .plate {
+      margin: 8px 0 12px;
+      padding: 14px 18px;
+      background: var(--yellow);
+      border: 3px solid #111;
+      border-radius: 8px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: clamp(1.4rem, 4vw, 2.1rem);
+      letter-spacing: 0.14em;
+      text-align: center;
+      box-shadow: 4px 4px 0 #111;
+    }
+    .plate.miss {
+      background: #eef1ee;
+      box-shadow: none;
+      letter-spacing: 0.02em;
+      font-size: 1.15rem;
+      color: var(--muted);
+    }
+    .meta { color: var(--muted); line-height: 1.5; }
+    .meta strong { color: var(--ink); }
+    details { margin-top: 12px; }
+    pre {
+      background: #111;
+      color: #e8f5e9;
+      padding: 12px 14px;
+      border-radius: 10px;
+      overflow: auto;
+      font-size: 0.82rem;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin: 8px 0 28px;
+    }
+    @media (max-width: 720px) { .metrics { grid-template-columns: 1fr 1fr; } }
+    .m { background: #fff; border-radius: 12px; padding: 12px 14px; }
+    .m h3 { margin: 0; font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+    .m .n { font-size: 1.35rem; font-weight: 800; }
+    footer { padding: 0 24px 40px; color: var(--muted); font-size: 0.92rem; }
+    a { color: #0b6e27; }
+    progress { width: 160px; height: 8px; accent-color: var(--green); }
+  </style>
+</head>
+<body>
+  <div class="stripe"></div>
+  <header>
+    <div class="flag">🇹🇿</div>
+    <h1>tz-alpr</h1>
+    <p class="lead">Upload a vehicle-rear photo or a plate crop. Detection and OCR run in this page — no Gradio server.</p>
+    <div class="status" id="load-status">
+      <span class="dot" id="dot"></span>
+      <span id="load-text">Loading models…</span>
+      <progress id="prog" value="0" max="1"></progress>
+    </div>
+  </header>
+  <main>
+    <div class="layout">
+      <section class="card">
+        <label class="drop" id="drop" for="file">
+          <div class="hint" id="hint">Drop a photo here, or click to upload<br /><small>JPG / PNG · rear of the vehicle, or a tight plate crop</small></div>
+          <canvas id="vis" hidden></canvas>
+        </label>
+        <input id="file" type="file" accept="image/*" />
+        <div class="row">
+          <button class="primary" id="run" disabled>Read plate</button>
+          <button class="ghost" id="clear" type="button">Clear</button>
+        </div>
+        <p class="meta" style="margin:14px 0 8px">Examples</p>
+        <div class="row">
+          <button class="ex" data-src="examples/T336CAG.jpg" type="button">T336CAG · car</button>
+          <button class="ex" data-src="examples/T759CQS.jpg" type="button">T759CQS · two-line</button>
+          <button class="ex" data-src="examples/MC474JRR.jpg" type="button">MC474JRR · motorcycle</button>
+        </div>
+      </section>
+      <section class="card">
+        <div class="meta">Normalized plate</div>
+        <div class="plate" id="plate">—</div>
+        <div class="meta" id="summary">Upload a photo after the models finish loading.</div>
+        <details>
+          <summary>JSON result</summary>
+          <pre id="json">[]</pre>
+        </details>
+      </section>
+    </div>
+    <div class="metrics">
+      <article class="m"><h3>Test exact match</h3><div class="n">73.8%</div></article>
+      <article class="m"><h3>Character accuracy</h3><div class="n">88.9%</div></article>
+      <article class="m"><h3>Auto-accept band</h3><div class="n">86.9%</div></article>
+      <article class="m"><h3>Labelled photos</h3><div class="n">26,108</div></article>
+    </div>
+    <p class="meta">Author: <strong>Japhari</strong> · <a href="https://huggingface.co/Japhari">huggingface.co/Japhari</a> · model <a href="https://huggingface.co/Japhari/tz-alpr-ocr">Japhari/tz-alpr-ocr</a> · code <a href="https://github.com/stg-gov/tz-plates">stg-gov/tz-plates</a></p>
+  </main>
+  <footer>© Japhari · Apache-2.0 · Not a legal enforcement decision. Review readings under 90% confidence. Two-line motorcycle plates read best when the crop is tight.</footer>
+  <script>
+    const CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const YOLO_SIZE = 640;
+    const OCR_W = 256;
+    const OCR_H = 32;
+
+    let yoloSess = null;
+    let ocrSess = null;
+    let currentImg = null;
+
+    const $ = (id) => document.getElementById(id);
+    const drop = $("drop");
+    const hint = $("hint");
+    const vis = $("vis");
+    const file = $("file");
+    const runBtn = $("run");
+
+    async function fetchBuffer(url, onProg) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Failed to fetch " + url + " (" + res.status + ")");
+      const total = Number(res.headers.get("content-length") || 0);
+      if (!res.body || !total) return await res.arrayBuffer();
+      const reader = res.body.getReader();
+      const chunks = [];
+      let rec = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        rec += value.length;
+        onProg(rec / total);
+      }
+      const out = new Uint8Array(rec);
+      let o = 0;
+      for (const c of chunks) { out.set(c, o); o += c.length; }
+      return out.buffer;
+    }
+
+    async function loadModels() {
+      ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/";
+      ort.env.wasm.numThreads = 1;
+      $("load-text").textContent = "Downloading plate detector…";
+      const yoloBuf = await fetchBuffer("plate_yolo.onnx", (p) => { $("prog").value = p * 0.25; });
+      $("load-text").textContent = "Downloading OCR…";
+      const ocrBuf = await fetchBuffer("ocr_crnn.onnx", (p) => { $("prog").value = 0.25 + p * 0.55; });
+      $("load-text").textContent = "Starting ONNX Runtime…";
+      yoloSess = await ort.InferenceSession.create(yoloBuf, { executionProviders: ["wasm"] });
+      $("prog").value = 0.88;
+      ocrSess = await ort.InferenceSession.create(ocrBuf, { executionProviders: ["wasm"] });
+      $("prog").value = 1;
+      $("prog").hidden = true;
+      $("dot").classList.add("ready");
+      $("load-text").textContent = "Models ready — upload a photo or pick an example.";
+      runBtn.disabled = false;
+    }
+
+    function letterbox(img) {
+      const c = document.createElement("canvas");
+      c.width = c.height = YOLO_SIZE;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.fillStyle = "rgb(114,114,114)";
+      ctx.fillRect(0, 0, YOLO_SIZE, YOLO_SIZE);
+      const scale = Math.min(YOLO_SIZE / img.height, YOLO_SIZE / img.width);
+      const nw = Math.round(img.width * scale);
+      const nh = Math.round(img.height * scale);
+      const left = Math.round((YOLO_SIZE - nw) / 2 - 0.1);
+      const top = Math.round((YOLO_SIZE - nh) / 2 - 0.1);
+      ctx.drawImage(img, left, top, nw, nh);
+      const rgba = ctx.getImageData(0, 0, YOLO_SIZE, YOLO_SIZE).data;
+      const chw = new Float32Array(3 * YOLO_SIZE * YOLO_SIZE);
+      const plane = YOLO_SIZE * YOLO_SIZE;
+      for (let i = 0; i < plane; i++) {
+        chw[i] = rgba[i * 4] / 255;
+        chw[plane + i] = rgba[i * 4 + 1] / 255;
+        chw[2 * plane + i] = rgba[i * 4 + 2] / 255;
+      }
+      return { chw, scale, left, top };
+    }
+
+    function canvasToOcrTensor(src) {
+      const c = document.createElement("canvas");
+      c.width = OCR_W;
+      c.height = OCR_H;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(src, 0, 0, src.width, src.height, 0, 0, OCR_W, OCR_H);
+      const rgba = ctx.getImageData(0, 0, OCR_W, OCR_H).data;
+      const out = new Float32Array(OCR_W * OCR_H);
+      for (let i = 0; i < out.length; i++) {
+        const y = (0.299 * rgba[i * 4] + 0.587 * rgba[i * 4 + 1] + 0.114 * rgba[i * 4 + 2]) / 255;
+        out[i] = (y - 0.5) / 0.5;
+      }
+      return out;
+    }
+
+    function cropCanvas(img, x1, y1, x2, y2) {
+      const sx = Math.max(0, Math.round(x1));
+      const sy = Math.max(0, Math.round(y1));
+      const sw = Math.max(1, Math.min(img.width, Math.round(x2)) - sx);
+      const sh = Math.max(1, Math.min(img.height, Math.round(y2)) - sy);
+      const c = document.createElement("canvas");
+      c.width = sw;
+      c.height = sh;
+      c.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      return c;
+    }
+
+    function destackCanvas(src, mode) {
+      const h = src.height, w = src.width;
+      let topY1, topY2, botY1, botY2;
+      if (mode === "half") {
+        const mid = Math.floor(h / 2);
+        const ov = Math.floor(0.08 * h);
+        topY1 = 0;
+        topY2 = Math.min(h, mid + ov);
+        botY1 = Math.max(0, mid - ov);
+        botY2 = h;
+      } else {
+        topY1 = Math.floor(0.04 * h);
+        topY2 = Math.floor(0.58 * h);
+        botY1 = Math.floor(0.42 * h);
+        botY2 = Math.floor(0.96 * h);
+      }
+      const band = Math.max(topY2 - topY1, botY2 - botY1, 8);
+      const c = document.createElement("canvas");
+      c.width = w * 2;
+      c.height = band;
+      const ctx = c.getContext("2d");
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(src, 0, topY1, w, Math.max(1, topY2 - topY1), 0, 0, w, band);
+      ctx.drawImage(src, 0, botY1, w, Math.max(1, botY2 - botY1), w, 0, w, band);
+      return c;
+    }
+
+    function preprocessOcr(img, box, mode) {
+      let crop = cropCanvas(img, box[0], box[1], box[2], box[3]);
+      if (mode === "destackL") {
+        const cut = Math.floor(crop.width * 0.08);
+        crop = cropCanvas(crop, cut, 0, crop.width, crop.height);
+        mode = "destack";
+      }
+      const src = (mode === "destack" || mode === "half") ? destackCanvas(crop, mode) : crop;
+      return canvasToOcrTensor(src);
+    }
+
+    function greedyCtc(logits) {
+      const T = 65, C = 37;
+      const chars = [];
+      const probs = [];
+      let prev = 0;
+      for (let t = 0; t < T; t++) {
+        let best = 0, bestV = -1e9, maxV = -1e9;
+        for (let c = 0; c < C; c++) {
+          const v = logits[t * C + c];
+          if (v > maxV) maxV = v;
+          if (v > bestV) { bestV = v; best = c; }
+        }
+        let sum = 0;
+        for (let c = 0; c < C; c++) sum += Math.exp(logits[t * C + c] - maxV);
+        const p = Math.exp(bestV - maxV) / sum;
+        if (best !== 0 && best !== prev) {
+          chars.push(CHARSET[best - 1]);
+          probs.push(p);
+        }
+        prev = best;
+      }
+      const text = chars.join("");
+      const conf = probs.length ? probs.reduce((a, b) => a + b, 0) / probs.length : 0;
+      return { text, conf };
+    }
+
+    function classify(text) {
+      const t = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (t.length === 7 && t[0] === "T" && /^\d{3}$/.test(t.slice(1, 4)) && /^[A-Z]{3}$/.test(t.slice(4))) {
+        return { plate: t, type: "PRIVATE" };
+      }
+      if (t.startsWith("MC") && t.length === 8 && /^\d{3}$/.test(t.slice(2, 5)) && /^[A-Z]{3}$/.test(t.slice(5))) {
+        return { plate: t, type: "MOTORCYCLE" };
+      }
+      return { plate: t, type: "UNKNOWN" };
+    }
+
+    function formatPlate(p) {
+      if (p.length === 7 && p[0] === "T") return "T " + p.slice(1, 4) + " " + p.slice(4);
+      if (p.startsWith("MC") && p.length === 8) return "MC " + p.slice(2, 5) + " " + p.slice(5);
+      return p || "—";
+    }
+
+    function drawResults(img, plates) {
+      vis.width = img.width;
+      vis.height = img.height;
+      vis.hidden = false;
+      hint.hidden = true;
+      const ctx = vis.getContext("2d");
+      ctx.drawImage(img, 0, 0);
+      for (const p of plates) {
+        if (!p.bbox) continue;
+        const [x, y, w, h] = p.bbox;
+        const color = p.review_status === "auto_accept" ? "#1eb53a" : p.review_status === "review" ? "#00a3dd" : "#b42318";
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(3, Math.round(img.width / 280));
+        ctx.strokeRect(x, y, w, h);
+        ctx.font = "600 20px IBM Plex Mono, monospace";
+        ctx.fillStyle = color;
+        ctx.fillText(p.plate + "  " + p.confidence.toFixed(2), x, Math.max(22, y - 8));
+      }
+    }
+
+    async function yoloOnImage(img, ox, oy) {
+      const { chw, scale, left, top } = letterbox(img);
+      const yoloOut = await yoloSess.run({
+        images: new ort.Tensor("float32", chw, [1, 3, YOLO_SIZE, YOLO_SIZE]),
+      });
+      const det = yoloOut.output0.data;
+      const boxes = [];
+      for (let i = 0; i < 300; i++) {
+        const o = i * 6;
+        const conf = det[o + 4];
+        if (conf < 0.12) continue;
+        const x1 = (det[o] - left) / scale + ox;
+        const y1 = (det[o + 1] - top) / scale + oy;
+        const x2 = (det[o + 2] - left) / scale + ox;
+        const y2 = (det[o + 3] - top) / scale + oy;
+        const bw = x2 - x1, bh = y2 - y1;
+        if (bw < 24 || bh < 12) continue;
+        const asp = bw / Math.max(1, bh);
+        if (asp < 0.6 || asp > 6) continue;
+        boxes.push({ x1, y1, x2, y2, conf, src: "yolo" });
+      }
+      return boxes;
+    }
+
+    function brightBoxes(img) {
+      const maxW = 220;
+      const s = maxW / img.width;
+      const w = maxW, h = Math.max(1, Math.round(img.height * s));
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+      const mask = new Uint8Array(w * h);
+      const y0 = Math.floor(h * 0.28);
+      for (let y = y0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+          const Y = 0.299 * r + 0.587 * g + 0.114 * b;
+          const yellow = r > 150 && g > 130 && b < 130 && (r + g) > b * 2.2;
+          const white = Y > 168 && Math.abs(r - g) < 38 && Math.abs(g - b) < 38;
+          mask[y * w + x] = yellow || white ? 1 : 0;
+        }
+      }
+      const seen = new Uint8Array(w * h);
+      const boxes = [];
+      const areaImg = img.width * img.height;
+      for (let y = y0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const start = y * w + x;
+          if (!mask[start] || seen[start]) continue;
+          let minx = x, maxx = x, miny = y, maxy = y, n = 0;
+          const stack = [start];
+          seen[start] = 1;
+          while (stack.length) {
+            const p = stack.pop();
+            const px = p % w, py = (p / w) | 0;
+            n++;
+            if (px < minx) minx = px;
+            if (px > maxx) maxx = px;
+            if (py < miny) miny = py;
+            if (py > maxy) maxy = py;
+            const neigh = [p + 1, p - 1, p + w, p - w];
+            for (const ni of neigh) {
+              if (ni < 0 || ni >= w * h) continue;
+              if (mask[ni] && !seen[ni]) { seen[ni] = 1; stack.push(ni); }
+            }
+          }
+          const bw = maxx - minx + 1, bh = maxy - miny + 1;
+          const asp = bw / Math.max(1, bh);
+          if (n < 90 || asp < 0.75 || asp > 4.8 || bw < 16 || bh < 10) continue;
+          const box = { x1: minx / s, y1: miny / s, x2: (maxx + 1) / s, y2: (maxy + 1) / s, conf: 0.2, src: "bright" };
+          if (((box.x2 - box.x1) * (box.y2 - box.y1)) / areaImg > 0.22) continue;
+          boxes.push(box);
+        }
+      }
+      return boxes;
+    }
+
+    function looksLikePlateCrop(img) {
+      const a = img.width / img.height;
+      return a >= 0.9 && a <= 5 && img.width <= 720 && img.height <= 420;
+    }
+
+    function padBox(b, img, r) {
+      const bw = b.x2 - b.x1, bh = b.y2 - b.y1;
+      return {
+        x1: Math.max(0, b.x1 - bw * r),
+        y1: Math.max(0, b.y1 - bh * r),
+        x2: Math.min(img.width, b.x2 + bw * r),
+        y2: Math.min(img.height, b.y2 + bh * r),
+        conf: b.conf,
+        src: b.src,
+      };
+    }
+
+    async function scoreBox(img, b, mode, minOcr) {
+      const box = [b.x1, b.y1, b.x2, b.y2];
+      const logits = (await ocrSess.run({
+        image: new ort.Tensor("float32", preprocessOcr(img, box, mode), [1, 1, OCR_H, OCR_W]),
+      })).logits.data;
+      const { text, conf: ocrP } = greedyCtc(logits);
+      if (ocrP < minOcr) return null;
+      const classified = classify(text);
+      const fused = b.conf > 0
+        ? Math.cbrt(Math.max(b.conf, 1e-3) * Math.max(ocrP, 1e-3) * (classified.type !== "UNKNOWN" ? 0.92 : 0.55))
+        : ocrP;
+      const asp = (b.x2 - b.x1) / Math.max(1, b.y2 - b.y1);
+      let plate = classified.plate;
+      let ptype = classified.type;
+      // Wide yellow car plates: flag + "T" is often read as "MC".
+      if (mode !== "raw" && ptype === "MOTORCYCLE" && asp >= 1.85 && plate.startsWith("MC") && plate.length === 8) {
+        const alt = classify("T" + plate.slice(2));
+        if (alt.type === "PRIVATE") {
+          plate = alt.plate;
+          ptype = "PRIVATE";
+        }
+      }
+      if (mode !== "raw" && ptype === "MOTORCYCLE" && asp >= 1.85) return null;
+      const rank = ocrP + (ptype !== "UNKNOWN" ? 0.22 : -0.4) + (b.src === "yolo" ? 0.12 : 0);
+      return {
+        rank, plate, raw_ocr: text, plate_type: ptype,
+        ocr_confidence: +ocrP.toFixed(4),
+        detection_confidence: +b.conf.toFixed(4),
+        confidence: +fused.toFixed(4),
+        review_status: fused >= 0.90 ? "auto_accept" : fused >= 0.70 ? "review" : "manual",
+        bbox: [Math.round(box[0]), Math.round(box[1]), Math.round(box[2] - box[0]), Math.round(box[3] - box[1])],
+        destack: mode !== "raw",
+        source: b.src,
+      };
+    }
+
+    function plateAspect(b) {
+      return (b.x2 - b.x1) / Math.max(1, b.y2 - b.y1);
+    }
+
+    async function bestFromBoxes(img, boxes, minOcr) {
+      const cands = [];
+      for (const raw of boxes) {
+        const two = plateAspect(raw) < 3.6;
+        const modes = two ? ["destack", "half", "destackL", "raw"] : ["raw"];
+        const padded = padBox(raw, img, two ? 0.10 : 0.04);
+        for (const b of [raw, padded]) {
+          for (const mode of modes) {
+            const rec = await scoreBox(img, b, mode, minOcr);
+            if (rec) cands.push(rec);
+          }
+        }
+      }
+      const valid = cands.filter((c) => c.plate_type !== "UNKNOWN");
+      valid.sort((a, b) => b.ocr_confidence - a.ocr_confidence || b.rank - a.rank);
+      return valid[0] || null;
+    }
+
+    async function recognize(img) {
+      let boxes = await yoloOnImage(img, 0, 0);
+      const yOff = Math.floor(img.height * 0.38);
+      if (yOff > 40) {
+        const low = cropCanvas(img, 0, yOff, img.width, img.height);
+        const extra = await yoloOnImage(low, 0, yOff);
+        boxes = boxes.concat(extra);
+      }
+      let best = await bestFromBoxes(img, boxes, 0.35);
+      if (!best || best.plate_type === "UNKNOWN") {
+        const bright = await bestFromBoxes(img, brightBoxes(img), 0.55);
+        if (bright && bright.plate_type !== "UNKNOWN") best = bright;
+      }
+      if ((!best || best.plate_type === "UNKNOWN") && looksLikePlateCrop(img)) {
+        const cropBest = await bestFromBoxes(img, [{ x1: 0, y1: 0, x2: img.width, y2: img.height, conf: 0.3, src: "crop" }], 0.4);
+        if (cropBest && cropBest.plate_type !== "UNKNOWN") best = cropBest;
+      }
+      if (!best || best.plate_type === "UNKNOWN") return [];
+      return [best];
+    }
+
+    function showPlates(plates) {
+      const el = $("plate");
+      const top = plates[0];
+      if (!top) {
+        el.textContent = "No plate found";
+        el.classList.add("miss");
+        $("summary").textContent = "No plate box was found, so nothing was guessed from the whole photo. Move closer or crop to the plate (two-line MC / bajaji plates especially).";
+        $("json").textContent = "[]";
+        return;
+      }
+      el.classList.remove("miss");
+      el.textContent = formatPlate(top.plate || "");
+      const badge = { auto_accept: "auto accept", review: "review", manual: "manual" }[top.review_status] || "—";
+      $("summary").innerHTML =
+        "<strong>Type:</strong> " + (top.plate_type || "—") +
+        " &nbsp; <strong>Confidence:</strong> " + (top.confidence != null ? Math.round(top.confidence * 100) + "%" : "—") +
+        " &nbsp; <strong>Route:</strong> " + badge +
+        "<br>Raw OCR: <code>" + (top.raw_ocr || "") + "</code>";
+      $("json").textContent = JSON.stringify(plates, null, 2);
+    }
+
+    async function run() {
+      if (!currentImg || !ocrSess) return;
+      runBtn.disabled = true;
+      $("summary").textContent = "Reading plate…";
+      try {
+        const plates = await recognize(currentImg);
+        drawResults(currentImg, plates);
+        showPlates(plates);
+      } catch (err) {
+        $("summary").textContent = "Read failed: " + err.message;
+        console.error(err);
+      }
+      runBtn.disabled = !yoloSess;
+    }
+
+    function setImage(img) {
+      currentImg = img;
+      vis.width = img.width;
+      vis.height = img.height;
+      vis.hidden = false;
+      hint.hidden = true;
+      vis.getContext("2d").drawImage(img, 0, 0);
+      if (yoloSess) run();
+    }
+
+    function loadFromUrl(url) {
+      const img = new Image();
+      img.onload = () => setImage(img);
+      img.onerror = () => { $("summary").textContent = "Could not load " + url; };
+      img.src = url;
+    }
+
+    file.addEventListener("change", () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      const img = new Image();
+      img.onload = () => setImage(img);
+      img.src = URL.createObjectURL(f);
+    });
+    drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+    drop.addEventListener("drop", (e) => {
+      e.preventDefault();
+      drop.classList.remove("drag");
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f) return;
+      const img = new Image();
+      img.onload = () => setImage(img);
+      img.src = URL.createObjectURL(f);
+    });
+    runBtn.addEventListener("click", (e) => { e.preventDefault(); run(); });
+    $("clear").addEventListener("click", () => {
+      currentImg = null;
+      vis.hidden = true;
+      hint.hidden = false;
+      $("plate").textContent = "—";
+      $("plate").classList.remove("miss");
+      $("summary").textContent = "Upload a photo after the models finish loading.";
+      $("json").textContent = "[]";
+      file.value = "";
+    });
+    document.querySelectorAll(".ex").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        loadFromUrl(btn.dataset.src);
+      });
+    });
+
+    loadModels().catch((err) => {
+      $("dot").classList.add("err");
+      $("prog").hidden = true;
+      $("load-text").textContent = "Model load failed: " + err.message;
+    });
+  </script>
+</body>
+</html>

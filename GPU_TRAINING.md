@@ -81,6 +81,33 @@ Tunables (env vars): `PREP_LIMIT` (0 = all), `SYNTH_COUNT`, `FINETUNE_EPOCHS`,
 Watch progress from another shell: `tools/progress.sh -w 15`
 or TensorBoard: `tensorboard --logdir lightning_logs`.
 
+After prepare, `tools/analyze_dataset.py` writes `reports/dataset_analysis.md`
+(split sizes, plate types, lighting, audit reject reasons).
+
+### More labelled photos later
+
+Add files to `labeled_images/` and matching rows to `labels.jsonl`, then:
+
+```bash
+bash scripts/retrain.sh
+```
+
+That re-audits, recrops, re-analyses, and **fine-tunes from** `models/ocr/v1/ocr_crnn.pt`
+(skip if the label/image fingerprint is unchanged). Override epochs with
+`FINETUNE_EPOCHS=40`. Full cold start remains `bash scripts/gpu_train.sh`.
+
+### Push weights to Hugging Face
+
+```bash
+python tools/package_hf_model.py          # -> hf_export/tz-alpr-ocr/
+hf auth login
+HF_REPO=Japhari/tz-alpr-ocr bash scripts/push_hf.sh
+```
+
+Does not upload images. Only the OCR checkpoint, configs, and model card.
+
+Public demo Space (static, in-browser ONNX): [huggingface.co/spaces/Japhari/tz-alpr](https://huggingface.co/spaces/Japhari/tz-alpr).
+
 ---
 
 ## 3. Manual, step by step
@@ -172,3 +199,7 @@ VGG-style CRNN backbone that pools height to 1 inside the conv stack.
 - End-to-end exact-match ≥ 95 % under normal daytime conditions
 - Separate numbers for night / blur / motorcycle / angled (`reports/eval_hard_test.json`)
 - GPU latency < 100 ms/image; CPU deployment usable without a GPU
+
+**Measured 30 Aug 2026 (RTX 5090):** test exact-match **73.8%** (char-acc 88.9%,
+n=1,808); daytime 73.4%; auto-accept band 86.9%; hard_test 9.4% (n=1,084).
+Full tables, splits, and checkpoints: [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md).

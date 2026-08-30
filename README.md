@@ -25,7 +25,7 @@ Implemented and tested in this repository:
 | Per-vehicle plate detection + full-frame safety net; box in image + vehicle coords | ✅ complete |
 | Plate detector — trained **YOLO** + **classical fallback** | ✅ (fallback runs with no weights) |
 | Plate rectification (homography / contour / resize) | ✅ complete |
-| OCR — **CRNN + CTC** model, Lightning training, ONNX export | ✅ code complete, needs training |
+| OCR — **CRNN + CTC** model, Lightning training, ONNX export | ✅ trained 30 Aug 2026 — test exact-match 73.8% ([`TRAINING_RESULTS.md`](TRAINING_RESULTS.md)) |
 | Tanzania rule engine + Tanzania-aware decoding | ✅ complete, unit-tested |
 | Calibrated confidence + review routing | ✅ complete, unit-tested |
 | Synthetic plate generator · dataset prep / leakage-safe splitting · eval + calibration | ✅ complete |
@@ -37,6 +37,11 @@ OCR engine**, and — unless `.[detect]` extras are installed — **no vehicle
 detector** (full-frame plate detection). Responses are always well-formed and
 every degraded stage is listed in `warnings`. Install extras + train the models
 (below) to make it production-grade.
+
+**Author:** [Japhari](https://huggingface.co/Japhari)
+
+- Live plate reader (in-browser ONNX): [huggingface.co/spaces/Japhari/tz-alpr](https://huggingface.co/spaces/Japhari/tz-alpr)
+- OCR + plate-detector weights: [huggingface.co/Japhari/tz-alpr-ocr](https://huggingface.co/Japhari/tz-alpr-ocr)
 
 ---
 
@@ -249,10 +254,11 @@ python tools/predict_image.py labeled_images/T336CAG-0007245e981f11ee9347df11042
 
 ## Train the models on your Tanzanian dataset
 
-> **On a GPU box, use [`GPU_TRAINING.md`](GPU_TRAINING.md)** — it's a one-command
-> runbook (`bash scripts/gpu_train.sh`: fetch detector → prep data → synthetic →
-> pre-flight sanity check → pretrain → fine-tune → evaluate → export ONNX) plus a
-> CUDA `docker/Dockerfile.train`. The steps below are the manual equivalent.
+> **On a GPU box, use [`GPU_TRAINING.md`](GPU_TRAINING.md)** — one-command
+> `bash scripts/gpu_train.sh` (audit → crop → **dataset analysis** → synthetic →
+> overfit check → pretrain → fine-tune → evaluate → pack for Hugging Face).
+> More photos later: `bash scripts/retrain.sh`. Hub upload: `HF_REPO=you/tz-alpr-ocr bash scripts/push_hf.sh`.
+> Measured numbers: [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md) · [`DATASET_ANALYSIS.md`](DATASET_ANALYSIS.md).
 
 Install training extras once:
 
@@ -318,6 +324,8 @@ python training/evaluate.py --split hard_test
 #      slices by plate_type & lighting & review band, reliability table)
 #   -> models/ocr/v1/confidence_calibration.json
 ```
+
+Latest measured numbers (this machine): [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md).
 
 ### F. Export for the runtime
 

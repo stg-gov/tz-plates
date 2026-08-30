@@ -48,6 +48,9 @@ else
     --skip-yolo-export 2>&1 | tee logs/prepare_dataset.log
 fi
 
+say "3b. dataset analysis (splits, plate types, lighting, reject reasons)"
+python tools/analyze_dataset.py 2>&1 | tee logs/dataset_analysis.log
+
 say "4. generate layout-correct synthetic OCR crops (OCR pretraining)"
 if [ -f datasets/synthetic/generated_plates_v2/ocr_annotations.csv ] && [ "${FORCE_SYNTH:-0}" != "1" ]; then
   echo "synthetic set exists — skipping (FORCE_SYNTH=1 to redo)"
@@ -69,7 +72,7 @@ fi
 if [ "$SKIP_PRETRAIN" != "1" ]; then
   say "6. stage 1 — pretrain OCR on synthetic plates"
   python training/train_ocr.py --stage pretrain 2>&1 | tee logs/pretrain.log
-  INIT_ARG=(--init models/ocr/v1/ocr_crnn_pretrained.pt)
+  INIT_ARG=(--init models/ocr/v1/ocr_pretrained.pt)
   STAGE=finetune
 else
   INIT_ARG=()
@@ -86,14 +89,36 @@ say "8. evaluate + calibrate confidence"
 python training/evaluate.py --split test --calibrate 2>&1 | tee logs/eval_test.log
 python training/evaluate.py --split hard_test          2>&1 | tee logs/eval_hard_test.log
 
-say "9. export ONNX for the runtime"
+say "9. export ONNX for the runtime (optional)"
 CKPT="$(ls -t checkpoints/ocr-${STAGE}-*.ckpt 2>/dev/null | head -1)"
 [ -z "$CKPT" ] && CKPT="checkpoints/last.ckpt"
-python tools/export_onnx.py ocr --ckpt "$CKPT" 2>&1 | tee logs/export.log
+if ! python tools/export_onnx.py ocr --ckpt "$CKPT" 2>&1 | tee logs/export.log; then
+  echo "ONNX export skipped/failed — PyTorch weights are enough (TZ_ALPR_RUNTIME=torch)"
+fi
+
+say "10. pack Hugging Face folder (does not upload)"
+python tools/package_hf_model.py
+
+python - <<'PY'
+from pathlib import Path
+import hashlib
+root = Path(".")
+h = hashlib.sha256()
+labels = root / "labels.jsonl"
+h.update(str(labels.stat().st_size if labels.exists() else 0).encode())
+if labels.exists():
+    h.update(labels.read_bytes())
+n = len(list((root / "labeled_images").glob("*"))) if (root / "labeled_images").exists() else 0
+h.update(f"|images={n}".encode())
+Path("datasets/.last_train_manifest").write_text(f"{n} {h.hexdigest()[:16]}\n")
+PY
 
 say "DONE"
-echo "OCR weights : models/ocr/v1/ocr_crnn.pt  (+ .onnx)"
-echo "Reports     : reports/eval_test.json  reports/eval_hard_test.json"
-echo "Serve       : export TZ_ALPR_OCR_WEIGHTS=models/ocr/v1/ocr_crnn.pt"
-echo "              export TZ_ALPR_OCR_ONNX=models/ocr/v1/ocr_crnn.onnx TZ_ALPR_RUNTIME=onnx"
-echo "              uvicorn tz_alpr.api.main:app --port 8080"
+echo "OCR weights : models/ocr/v1/ocr_crnn.pt"
+echo "Analysis    : reports/dataset_analysis.md"
+echo "Eval        : reports/eval_test.json  reports/eval_hard_test.json"
+echo "HF folder   : hf_export/tz-alpr-ocr/"
+echo "More data   : add files to labeled_images/ + labels.jsonl, then  bash scripts/retrain.sh"
+echo "Upload      : HF_REPO=you/tz-alpr-ocr bash scripts/push_hf.sh"
+echo "Serve       : export TZ_ALPR_OCR_WEIGHTS=models/ocr/v1/ocr_crnn.pt TZ_ALPR_RUNTIME=torch"
+echo "              uvicorn tz_alpr.api.main:app --port 8081"

@@ -1,0 +1,12 @@
+---
+description: Git and Hugging Face attribution is Japhari only
+alwaysApply: true
+---
+
+# Attribution
+
+The only contributor, author, and committer is **japhari** `<japharimbaru@gmail.com>`.
+
+- Never add `Co-authored-by: Cursor` or any Cursor / cursoragent trailer.
+- Never set commit author or committer to Cursor Agent.
+- Hugging Face model cards and Spaces list **Japhari** only.
