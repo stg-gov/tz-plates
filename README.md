@@ -144,12 +144,43 @@ datasets/
   retraining_queue/                      active-learning drop zone (Phase ≥4)
 ```
 
-Provided data (`labeled_images/` + `labels.jsonl`, 26 137 phone photos of vehicle
-rears, each labelled with a human-verified plate string; ~24.5 k `T### ABC`
-private, ~1.6 k `MC### ABC` motorcycle). No boxes — `tools/prepare_dataset.py`
-produces plate crops and *weak* YOLO boxes from the detector; hand-correct a few
-hundred boxes before training the production detector. OCR crops are usable as-is
-because the text is verified.
+### Add original data on a training server
+
+Copy the original inputs beside the repository root — never into `datasets/`:
+
+```
+tz-plates/
+  labeled_images/                 # original vehicle-rear photos
+    T336CAG-example.jpg
+  labels.jsonl                    # one JSON object per image
+```
+
+Each `labels.jsonl` record must reference the exact filename in
+`labeled_images/` and contain an uppercase, space-free plate label:
+
+```json
+{"image":"T336CAG-example.jpg","plate_text":"T336CAG","confidence":1.0}
+```
+
+Run the audit before preparation; it writes the accepted manifest and keeps
+invalid, corrupt, duplicate, or malformed records out of training:
+
+```bash
+python tools/audit_labeled_images.py
+python tools/prepare_dataset.py --workers 8 --skip-yolo-export
+# or run every audit, preparation, training, evaluation and export step:
+bash scripts/gpu_train.sh
+```
+
+The source data and all generated `datasets/` contents are Git-ignored. Do not
+manually add files to `datasets/processed/`, `datasets/synthetic/`, or
+`datasets/ocr/`; the pipeline creates them from the original data.
+
+The supplied source set has 26,137 phone photos of vehicle rears, each labelled
+with a human-verified plate string; ~24.5 k `T### ABC` private and ~1.6 k
+`MC### ABC` motorcycle. No boxes — `tools/prepare_dataset.py` produces plate
+crops and *weak* YOLO boxes from the detector; hand-correct a few hundred boxes
+before training the production detector.
 
 **Unified metadata** (`datasets/annotations/metadata.jsonl`): `image_id, camera_id,
 timestamp, vehicle_bbox, plate_bbox, plate_text, plate_type, vehicle_type,
@@ -167,7 +198,7 @@ and `blur_score` are computed).
 
 ## 6. Model architecture (OCR)
 
-`src/tz_alpr/ocr/model.py`. Input `1×48×192` grayscale (rectified plate).
+`src/tz_alpr/ocr/model.py`. Input `1×32×256` grayscale (de-stacked OCR crop).
 6 conv blocks downsample height→1 and width→time (stride 4), → 2-layer BiLSTM(256)
 → linear → `log_softmax` over 37 classes (36 alnum + CTC blank). Greedy CTC
 decoder (`ctc_decode.py`) returns the string **and** per-output-character
@@ -239,6 +270,7 @@ python tools/overfit_check.py        # model must overfit a small clean set (tra
 ### A. Prepare the dataset
 
 ```bash
+python tools/audit_labeled_images.py
 python tools/prepare_dataset.py --workers 8
 #   -> datasets/processed/plate_crops/*.jpg
 #   -> datasets/ocr/ocr_annotations.csv         (train/val/test/hard_test, grouped by plate identity)
