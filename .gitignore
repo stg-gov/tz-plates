@@ -13,16 +13,21 @@ htmlcov/
 .ruff_cache/
 
 # Data & artifacts
+# Original sources, generated crops, labels and training splits never belong in Git.
 labeled_images/
 labels.jsonl
 labeled_images.zip
-datasets/annotations/metadata.jsonl
 datasets/raw/
 datasets/processed/
 datasets/synthetic/
-datasets/ocr/*.csv
-datasets/splits/*.txt
+datasets/ocr/*
+datasets/splits/*
 datasets/retraining_queue/*
+datasets/annotations/accepted_labels.jsonl
+datasets/annotations/metadata.jsonl
+datasets/annotations/ocr/*
+datasets/annotations/plates/*
+datasets/annotations/vehicles/*
 !datasets/**/.gitkeep
 
 # Model weights
