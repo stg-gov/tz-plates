@@ -1,0 +1,43 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Data & artifacts
+labeled_images/
+labels.jsonl
+labeled_images.zip
+datasets/annotations/metadata.jsonl
+datasets/raw/
+datasets/processed/
+datasets/synthetic/
+datasets/ocr/*.csv
+datasets/splits/*.txt
+datasets/retraining_queue/*
+!datasets/**/.gitkeep
+
+# Model weights
+*.pt
+*.pth
+*.onnx
+*.engine
+checkpoints/
+models/**/*.pt
+models/**/*.onnx
+# ...but keep the small (~5 MB) open-source pretrained plate detector in-repo so
+# training boxes without internet can still bootstrap. Re-fetch: tools/fetch_pretrained.py
+!models/plate_detector/v1/plate_yolo.pt
+lightning_logs/
+wandb/
+runs/
+logs/
+reports/

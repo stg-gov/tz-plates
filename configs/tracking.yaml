@@ -1,0 +1,27 @@
+# Video / stream tracking + temporal aggregation + event dedup (spec §17, §18).
+# Consumed by src/tz_alpr/pipeline/video.py.
+
+# Frame sampling
+sample_fps: 5                 # analyse N frames/sec regardless of source fps
+max_plates_per_vehicle: 2
+
+# ByteTracker
+track_high_thresh: 0.5        # detections >= this drive primary association
+track_low_thresh: 0.1        # detections in [low, high) recover occluded tracks
+track_match_iou: 0.30
+track_max_age: 30            # sampled frames a track survives without a match
+# used only when there is no vehicle detector AND the plate detector is the
+# classical fallback (its confidences run low)
+plate_track_high_thresh: 0.15
+plate_track_low_thresh: 0.05
+
+# Temporal OCR aggregation
+#   (weighted voting is in src/tz_alpr/tracking/aggregator.py — no knobs needed;
+#    it uses each frame's fused confidence and the OCR posteriors directly)
+
+# Event deduplication (spec §18)
+event_min_frames: 3          # a track must be seen this many sampled frames
+event_min_confidence: 0.70   # ... and reach this aggregated confidence, to emit
+event_flush_min_confidence: 0.45   # lower bar when a track ends without emitting
+event_replace_delta: 0.08    # re-issue an event only if the plate changes AND conf gains this much
+event_dedup_window_s: 120    # same plate from a different (fragmented) track is suppressed within this window

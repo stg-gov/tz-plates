@@ -1,0 +1,33 @@
+# Shared training-infrastructure defaults (PyTorch Lightning).
+seed: 1337
+accelerator: auto            # auto | gpu | cpu
+devices: auto
+strategy: auto
+
+logging:
+  tensorboard: true
+  wandb:
+    enabled: false
+    project: tz-alpr
+    entity: null
+
+checkpoint:
+  dirpath: checkpoints
+  save_top_k: 3
+  save_last: true
+
+# Dataset-splitting policy. Frames from the same source (camera/video/session)
+# must never straddle train/val/test. tools/prepare_dataset.py groups by
+# `group_key` before splitting.
+split:
+  group_key: plate_text       # for the current still-image dataset, group by identity
+  ratios:
+    train: 0.82
+    val: 0.09
+    test: 0.09
+  hard_test:
+    # crops routed here regardless of the ratios above
+    max_plate_px_width: 90
+    min_detector_conf: 0.35
+    include_categories: ["MOTORCYCLE", "UNKNOWN"]
+  seed: 1337

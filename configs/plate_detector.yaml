@@ -1,0 +1,34 @@
+# Dedicated license-plate detector (YOLO-family, single class: "plate").
+model:
+  arch: ultralytics_yolo
+  weights: yolov8n.pt          # starting point for fine-tuning; replaced by trained weights
+  imgsz: 640
+  conf_threshold: 0.25
+  iou_threshold: 0.50
+  max_det: 20
+  classes: ["plate"]
+
+train:
+  data_yaml: datasets/annotations/plates/plates.yaml   # written by tools/prepare_dataset.py
+  epochs: 120
+  batch: 16
+  imgsz: 640
+  patience: 25
+  device: 0                    # gpu id, or "cpu"
+  project: runs/plate_detector
+  name: v1
+  augment: true
+
+# Classical fallback used when no trained weights exist, so the end-to-end
+# pipeline is runnable from a clean checkout (src/tz_alpr/plate_detection/classical.py).
+fallback:
+  enabled: true
+  yellow_hsv_low: [15, 60, 60]
+  yellow_hsv_high: [45, 255, 255]
+  white_hsv_low: [0, 0, 150]
+  white_hsv_high: [180, 60, 255]
+  min_area_ratio: 0.0008       # plate area / image area
+  max_area_ratio: 0.35
+  min_aspect: 1.6
+  max_aspect: 6.0
+  approx_epsilon_ratio: 0.02

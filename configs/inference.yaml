@@ -1,0 +1,47 @@
+# Runtime inference pipeline.
+#   Phase 1: plate_detection -> rectification -> ocr -> tz_rules
+#   Phase 2: vehicle_detection -> per-vehicle plate_detection -> rectification -> ocr -> tz_rules
+model_version: tz-alpr-1.2.0
+device: cpu                    # cpu | cuda:0
+runtime: torch                # torch | onnx
+
+pipeline:
+  use_vehicle_detector: true   # Phase 2 (falls back to full-frame plate detection if no detector)
+  use_plate_detector: true
+  use_rectification: true
+  use_super_resolution: false  # optional, adds latency (spec §9)
+  max_plates_per_image: 8
+  max_vehicles_per_image: 12
+  # also scan the whole frame for plates missed inside vehicle boxes (bajaji, cut-off vehicles)
+  full_frame_safety_net: true
+  vehicle_crop_pad_ratio: 0.06
+
+vehicle_detector:
+  config: configs/detector.yaml
+
+preprocessing:
+  auto_enhance: true
+  clahe_clip: 2.0
+  clahe_grid: 8
+  denoise: false
+
+plate_detector:
+  config: configs/plate_detector.yaml
+
+rectification:
+  output_width: 192
+  output_height: 48
+  two_line_output_height: 96   # motorcycle / stacked plates get de-stacked to single line
+
+ocr:
+  config: configs/ocr.yaml
+  weights_env: TZ_ALPR_OCR_WEIGHTS
+  onnx_env: TZ_ALPR_OCR_ONNX
+
+country: TZ
+country_rules_config: configs/tanzania.yaml
+
+super_resolution:
+  model: realesrgan-x4-lite
+  weights: models/sr/v1/realesr_lite.pt
+  apply_if_plate_width_below_px: 70

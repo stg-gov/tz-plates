@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+# GPU training image for tz-alpr (OCR + detectors).
+#   docker build -f docker/Dockerfile.train -t tz-alpr-train .
+#   docker run --gpus all -it --rm -v $PWD:/workspace -w /workspace tz-alpr-train \
+#       bash scripts/gpu_train.sh
+#
+# Base: CUDA 12.1 + cuDNN 8 runtime on Ubuntu 22.04. Match the host driver
+# (needs >= 525 for CUDA 12.1). For a different CUDA, change the base tag and the
+# torch --index-url below.
+
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3.11 python3.11-venv python3-pip \
+      libgl1 libglib2.0-0 git curl ffmpeg \
+ && rm -rf /var/lib/apt/lists/* \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python \
+ && ln -sf /usr/bin/python3.11 /usr/local/bin/python3
+
+WORKDIR /workspace
+
+# CUDA build of PyTorch first, then the rest.
+RUN python -m pip install --upgrade pip \
+ && pip install --index-url https://download.pytorch.org/whl/cu121 \
+      "torch==2.3.*" "torchvision==0.18.*"
+
+COPY requirements.txt pyproject.toml README.md ./
+RUN pip install -r requirements.txt \
+ && pip install \
+      "lightning>=2.2" "albumentations>=1.4" pandas scikit-learn tqdm \
+      "ultralytics>=8.1" "onnx>=1.15" "onnxruntime-gpu>=1.17" tensorboard "wandb>=0.16" \
+      "huggingface_hub>=0.23"
+
+COPY . .
+RUN pip install --no-deps -e .
+
+CMD ["bash", "scripts/gpu_train.sh"]

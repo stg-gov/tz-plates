@@ -1,0 +1,66 @@
+# Development stack (spec §26). Phase 1 needs only `alpr-api`.
+# redis/postgres/review-ui are wired for Phase 3-5 and start only with:
+#   docker compose --profile full up
+name: tz-alpr
+
+services:
+  alpr-api:
+    build:
+      context: .
+      target: runtime
+    image: tz-alpr:latest
+    ports:
+      - "${TZ_ALPR_API_PORT:-8080}:8080"
+    environment:
+      TZ_ALPR_ENV: ${TZ_ALPR_ENV:-production}
+      TZ_ALPR_DEVICE: ${TZ_ALPR_DEVICE:-cpu}
+      TZ_ALPR_MODEL_VERSION: ${TZ_ALPR_MODEL_VERSION:-tz-alpr-1.0.0}
+      TZ_ALPR_OCR_WEIGHTS: ${TZ_ALPR_OCR_WEIGHTS:-models/ocr/v1/ocr_crnn.pt}
+      TZ_ALPR_OCR_ONNX: ${TZ_ALPR_OCR_ONNX:-models/ocr/v1/ocr_crnn.onnx}
+      TZ_ALPR_PLATE_DETECTOR_WEIGHTS: ${TZ_ALPR_PLATE_DETECTOR_WEIGHTS:-models/plate_detector/v1/plate_yolo.pt}
+      TZ_ALPR_RUNTIME: ${TZ_ALPR_RUNTIME:-torch}
+    volumes:
+      - ./models:/app/models:ro
+      - ./configs:/app/configs:ro
+    restart: unless-stopped
+
+  # ---- Phase 3-5 ----
+  stream-worker:
+    build:
+      context: .
+      target: training
+    command: ["python", "-c", "print('stream-worker: implemented in Phase 4')"]
+    profiles: ["full"]
+    depends_on: [alpr-api, redis]
+    environment:
+      TZ_ALPR_API_URL: http://alpr-api:8080
+    volumes:
+      - ./models:/app/models:ro
+
+  review-ui:
+    image: nginx:1.27-alpine
+    profiles: ["full"]
+    ports:
+      - "8090:80"
+    depends_on: [alpr-api]
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["full"]
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["full"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-alpr}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-alpr}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

@@ -1,0 +1,73 @@
+# OCR model + data configuration (CRNN + CTC).
+# Tuned for a single CUDA GPU. See GPU_TRAINING.md for the full runbook.
+model:
+  arch: crnn
+  backbone: cnn_lite            # canonical VGG-style CRNN stack (H pooled to 1 in-stack)
+  input_height: 32
+  input_width: 256              # room for de-stacked two-line plates (~7-8 chars)
+  input_channels: 1             # grayscale
+  rnn_hidden: 256
+  rnn_layers: 2
+  dropout: 0.20
+  # charset is sourced from configs/tanzania.yaml -> charset, + CTC blank at index 0
+
+decode:
+  method: greedy                # greedy | beam
+  beam_width: 12
+  blank_index: 0
+
+data:
+  ocr_annotations_csv: datasets/ocr/ocr_annotations.csv
+  splits_dir: datasets/splits
+  # v2 is the layout-correct generator: stacked physical plates de-stacked to OCR crops.
+  synthetic_csv: datasets/synthetic/generated_plates_v2/ocr_annotations.csv
+  image_root: .
+  min_text_len: 4
+  max_text_len: 10
+  batch_size: 256              # fits comfortably on a 12 GB+ GPU for a 9M-param model
+  num_workers: 8
+  pin_memory: true
+  # Tanzanian car plates are mostly two-line; auto-cropped detections vary in
+  # tightness, so drop the least-confident boxes from train/val.
+  min_det_conf: 0.5
+
+augmentation:
+  enabled: true
+  # Moderate preset. Real crops are already degraded (phone photos, de-stack seams),
+  # so heavy stacked aug hurts; these knobs are a safe middle ground for a GPU run.
+  motion_blur_p: 0.20
+  gaussian_blur_p: 0.15
+  iso_noise_p: 0.20
+  brightness_contrast_p: 0.50
+  shadow_p: 0.15
+  glare_p: 0.06
+  jpeg_p: 0.35
+  jpeg_quality: [35, 92]
+  perspective_p: 0.20
+  perspective_scale: 0.05
+  rotate_limit_deg: 5
+  night_p: 0.15
+  rain_p: 0.04
+  grid_dropout_p: 0.05
+
+train:
+  max_epochs: 80
+  min_epochs: 25                # CTC sits near the all-blank solution for many
+                               # steps before "turning on" — do not early-stop before this
+  precision: 16-mixed          # bf16-mixed also fine on Ampere+; use 32 to debug
+  lr: 0.001
+  weight_decay: 0.0001
+  optimizer: adamw
+  scheduler: onecycle          # onecycle | cosine
+  grad_clip: 5.0
+  early_stop_patience: 15
+  monitor: val/char_acc        # turns positive far earlier than val/seq_acc
+  monitor_mode: max
+  label_smoothing: 0.0
+  accumulate_grad_batches: 1
+
+pretrain:
+  # stage 1: synthetic-only, then fine-tune on real crops (spec §12)
+  max_epochs: 30
+  min_epochs: 12
+  lr: 0.0015
