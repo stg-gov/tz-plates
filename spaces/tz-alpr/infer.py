@@ -82,6 +82,12 @@ def _classify(text: str) -> tuple[str, str]:
         return t, "PRIVATE"
     if t.startswith("MC") and len(t) == 8 and t[2:5].isdigit() and t[5:].isalpha():
         return t, "MOTORCYCLE"
+    if len(t) >= 7 and t[:4].isalpha() and t[4:].isdigit() and not t.startswith("MC"):
+        return t, "SPECIAL"
+    if t[:1] != "T" and not t.startswith("MC") and 5 <= len(t) <= 8 and t[:2].isalpha() and t[2:].isdigit():
+        return t, "GOVERNMENT"
+    if t[:3].isalpha() and t[3:].isdigit() and 6 <= len(t) <= 8 and t[0] != "T" and not t.startswith("MC"):
+        return t, "GOVERNMENT"
     return t, "UNKNOWN"
 
 

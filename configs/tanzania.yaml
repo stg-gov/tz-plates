@@ -44,14 +44,25 @@ categories:
     confidence_bonus: 0.04
 
   - name: GOVERNMENT
-    description: "Government of Tanzania vehicles. Plain 'SU' style / older 3-letter + 4-digit."
-    regex: '^[A-Z]{2,3}\d{3,4}$'
-    normalized_regex: '^[A-Z]{2,3}[0-9]{3,4}$'
+    description: "Government of Tanzania vehicles. Plain 'SU' / 'SM' style, 2–3 letters + 3–5 digits."
+    regex: '^[A-Z]{2,3}\d{3,5}$'
+    normalized_regex: '^[A-Z]{2,3}[0-9]{3,5}$'
     display_format: "{raw}"
     slots: null
     plate_colour: white
-    lines: 1
+    lines: 2
     priority: 40
+    confidence_bonus: 0.0
+
+  - name: SPECIAL
+    description: "Force / agency / red plates (e.g. DFPA 2925). Almost none in the OCR train set."
+    regex: '^[A-Z]{4}\d{3,4}$'
+    normalized_regex: '^[A-Z]{4}[0-9]{3,4}$'
+    display_format: "{raw}"
+    slots: null
+    plate_colour: red
+    lines: 1
+    priority: 35
     confidence_bonus: 0.0
 
   - name: DIPLOMATIC

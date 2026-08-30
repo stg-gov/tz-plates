@@ -117,13 +117,15 @@
       text-align: center;
       box-shadow: 4px 4px 0 #111;
     }
-    .plate.miss {
+    .plate.miss, .plate.unsupported {
       background: #eef1ee;
       box-shadow: none;
       letter-spacing: 0.02em;
       font-size: 1.15rem;
       color: var(--muted);
     }
+    .plate.gov { background: #f4f4f4; }
+    .plate.special { background: #c62828; color: #fff; }
     .meta { color: var(--muted); line-height: 1.5; }
     .meta strong { color: var(--ink); }
     details { margin-top: 12px; }
@@ -155,7 +157,7 @@
   <header>
     <div class="flag">🇹🇿</div>
     <h1>tz-alpr</h1>
-    <p class="lead">Upload a vehicle-rear photo or a plate crop. Detection and OCR run in this page — no Gradio server.</p>
+    <p class="lead">Upload a vehicle-rear photo or a plate crop. Trained on private <strong>T ### ABC</strong> and motorcycle <strong>MC ### ABC</strong>. Other series (government SM, red DFPA, diplomatic) are labelled unsupported instead of forced into a T-plate.</p>
     <div class="status" id="load-status">
       <span class="dot" id="dot"></span>
       <span id="load-text">Loading models…</span>
@@ -381,13 +383,68 @@
       if (t.startsWith("MC") && t.length === 8 && /^\d{3}$/.test(t.slice(2, 5)) && /^[A-Z]{3}$/.test(t.slice(5))) {
         return { plate: t, type: "MOTORCYCLE" };
       }
+      if (/^[A-Z]{4}\d{3,4}$/.test(t) && !t.startsWith("MC")) {
+        return { plate: t, type: "SPECIAL" };
+      }
+      // SM 11736 / SU 1234. Exclude lone T-prefix so T-hallucinations stay PRIVATE or UNKNOWN.
+      if (/^[A-Z]{2,3}\d{3,5}$/.test(t) && t[0] !== "T" && !t.startsWith("MC")) {
+        return { plate: t, type: "GOVERNMENT" };
+      }
+      if (/^\d{1,3}[A-Z]{2}\d{2,4}$/.test(t)) {
+        return { plate: t, type: "DIPLOMATIC" };
+      }
       return { plate: t, type: "UNKNOWN" };
     }
 
-    function formatPlate(p) {
-      if (p.length === 7 && p[0] === "T") return "T " + p.slice(1, 4) + " " + p.slice(4);
-      if (p.startsWith("MC") && p.length === 8) return "MC " + p.slice(2, 5) + " " + p.slice(5);
+    function formatPlate(p, type) {
+      if (type === "PRIVATE" || (p.length === 7 && p[0] === "T" && /^\d{3}[A-Z]{3}$/.test(p.slice(1)))) {
+        return "T " + p.slice(1, 4) + " " + p.slice(4);
+      }
+      if (type === "MOTORCYCLE" || (p.startsWith("MC") && p.length === 8)) {
+        return "MC " + p.slice(2, 5) + " " + p.slice(5);
+      }
+      if (type === "GOVERNMENT") {
+        const m = p.match(/^([A-Z]{2,3})(\d{3,5})$/);
+        return m ? m[1] + " " + m[2] : p;
+      }
+      if (type === "SPECIAL") {
+        const m = p.match(/^([A-Z]{4})(\d{3,4})$/);
+        return m ? m[1] + " " + m[2] : p;
+      }
       return p || "—";
+    }
+
+    function cropColor(img, b) {
+      const src = cropCanvas(img, b.x1, b.y1, b.x2, b.y2);
+      const w = Math.min(src.width, 96);
+      const h = Math.min(src.height, 48);
+      const tmp = document.createElement("canvas");
+      tmp.width = w;
+      tmp.height = h;
+      tmp.getContext("2d").drawImage(src, 0, 0, w, h);
+      const data = tmp.getContext("2d").getImageData(0, 0, w, h).data;
+      let red = 0, yellow = 0, white = 0;
+      const n = data.length / 4;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], bl = data[i + 2];
+        const Y = 0.299 * r + 0.587 * g + 0.114 * bl;
+        if (r > 140 && r > g + 35 && r > bl + 35 && g < 130) red++;
+        else if (r > 150 && g > 130 && bl < 130 && (r + g) > bl * 2.2) yellow++;
+        else if (Y > 170 && Math.abs(r - g) < 40 && Math.abs(g - bl) < 40) white++;
+      }
+      const fr = red / n, fy = yellow / n, fw = white / n;
+      if (fr > 0.16 && fr >= fy) return "red";
+      if (fy > 0.16) return "yellow";
+      if (fw > 0.22) return "white";
+      return "other";
+    }
+
+    function trainedType(t) {
+      return t === "PRIVATE" || t === "MOTORCYCLE";
+    }
+
+    function otherKnownType(t) {
+      return t === "GOVERNMENT" || t === "SPECIAL" || t === "DIPLOMATIC";
     }
 
     function drawResults(img, plates) {
@@ -453,7 +510,8 @@
           const Y = 0.299 * r + 0.587 * g + 0.114 * b;
           const yellow = r > 150 && g > 130 && b < 130 && (r + g) > b * 2.2;
           const white = Y > 168 && Math.abs(r - g) < 38 && Math.abs(g - b) < 38;
-          mask[y * w + x] = yellow || white ? 1 : 0;
+          const red = r > 140 && r > g + 35 && r > b + 35 && g < 130;
+          mask[y * w + x] = yellow || white || red ? 1 : 0;
         }
       }
       const seen = new Uint8Array(w * h);
@@ -493,7 +551,8 @@
 
     function looksLikePlateCrop(img) {
       const a = img.width / img.height;
-      return a >= 0.9 && a <= 5 && img.width <= 720 && img.height <= 420;
+      if (img.height <= 48 && img.width >= 80) return true;
+      return a >= 0.9 && a <= 8 && img.width <= 720 && img.height <= 420;
     }
 
     function padBox(b, img, r) {
@@ -508,30 +567,77 @@
       };
     }
 
+    async function ocrCanvas(src) {
+      const logits = (await ocrSess.run({
+        image: new ort.Tensor("float32", canvasToOcrTensor(src), [1, 1, OCR_H, OCR_W]),
+      })).logits.data;
+      return greedyCtc(logits);
+    }
+
+    function stitchGov(topText, botText) {
+      let top = topText.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      const bot = botText.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!/^\d{3,5}$/.test(bot) || top.length < 1 || top.length > 4) return classify(top + bot);
+      // Prefix is 2–3 letters; S/5 and O/0 are common on untrained government series.
+      if (/^\d/.test(top)) top = top.replace(/^5/, "S").replace(/^0/, "O");
+      top = top.replace(/5/g, "S").replace(/0/g, "O");
+      const hit = classify(top + bot);
+      if (hit.type !== "UNKNOWN") return hit;
+      return classify(topText + botText);
+    }
+
     async function scoreBox(img, b, mode, minOcr) {
       const box = [b.x1, b.y1, b.x2, b.y2];
-      const logits = (await ocrSess.run({
-        image: new ort.Tensor("float32", preprocessOcr(img, box, mode), [1, 1, OCR_H, OCR_W]),
-      })).logits.data;
-      const { text, conf: ocrP } = greedyCtc(logits);
-      if (ocrP < minOcr) return null;
-      const classified = classify(text);
-      const fused = b.conf > 0
-        ? Math.cbrt(Math.max(b.conf, 1e-3) * Math.max(ocrP, 1e-3) * (classified.type !== "UNKNOWN" ? 0.92 : 0.55))
-        : ocrP;
+      const color = cropColor(img, b);
       const asp = (b.x2 - b.x1) / Math.max(1, b.y2 - b.y1);
+      const bw = b.x2 - b.x1, bh = b.y2 - b.y1;
+      let text, ocrP, bandTop = "";
+      if (mode === "bands") {
+        const crop = cropCanvas(img, box[0], box[1], box[2], box[3]);
+        const h = crop.height, w = crop.width;
+        const top = cropCanvas(crop, 0, Math.floor(0.04 * h), w, Math.floor(0.50 * h));
+        const bot = cropCanvas(crop, 0, Math.floor(0.42 * h), w, Math.floor(0.96 * h));
+        const a = await ocrCanvas(top);
+        const z = await ocrCanvas(bot);
+        bandTop = (a.text || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+        const stitched = stitchGov(a.text, z.text);
+        text = stitched.type !== "UNKNOWN" ? stitched.plate : (a.text + z.text).toUpperCase().replace(/[^A-Z0-9]/g, "");
+        ocrP = (a.conf + z.conf) / 2;
+        if (ocrP < minOcr * 0.8 && text.length < 5) return null;
+      } else {
+        const logits = (await ocrSess.run({
+          image: new ort.Tensor("float32", preprocessOcr(img, box, mode), [1, 1, OCR_H, OCR_W]),
+        })).logits.data;
+        const rec = greedyCtc(logits);
+        text = rec.text;
+        ocrP = rec.conf;
+        if (ocrP < minOcr) return null;
+      }
+      let classified = classify(text);
+      if (mode === "bands" && classified.type === "UNKNOWN") classified = stitchGov(text.slice(0, 2), text.slice(2));
       let plate = classified.plate;
       let ptype = classified.type;
       // Wide yellow car plates: flag + "T" is often read as "MC".
-      if (mode !== "raw" && ptype === "MOTORCYCLE" && asp >= 1.85 && plate.startsWith("MC") && plate.length === 8) {
+      if (mode !== "raw" && mode !== "bands" && ptype === "MOTORCYCLE" && asp >= 1.85 && plate.startsWith("MC") && plate.length === 8) {
         const alt = classify("T" + plate.slice(2));
         if (alt.type === "PRIVATE") {
           plate = alt.plate;
           ptype = "PRIVATE";
         }
       }
-      if (mode !== "raw" && ptype === "MOTORCYCLE" && asp >= 1.85) return null;
-      const rank = ocrP + (ptype !== "UNKNOWN" ? 0.22 : -0.4) + (b.src === "yolo" ? 0.12 : 0);
+      if (mode !== "raw" && mode !== "bands" && ptype === "MOTORCYCLE" && asp >= 1.85) return null;
+      // Red force / agency plates were not in the train set; never emit a yellow T/MC.
+      if (color === "red" && trainedType(ptype)) ptype = "UNSUPPORTED";
+      // Weak private reads on tiny boxes are almost always invented T-strings.
+      if (ptype === "PRIVATE" && (ocrP < 0.62 || bw < 56 || bh < 22)) ptype = "UNSUPPORTED";
+      const fused = b.conf > 0
+        ? Math.cbrt(Math.max(b.conf, 1e-3) * Math.max(ocrP, 1e-3) * (trainedType(ptype) || otherKnownType(ptype) ? 0.92 : 0.55))
+        : ocrP;
+      let rank = ocrP + (b.src === "yolo" ? 0.12 : 0);
+      if (otherKnownType(ptype)) rank += 0.48;
+      else if (trainedType(ptype)) rank += 0.22;
+      else rank -= 0.35;
+      if (mode === "bands" && otherKnownType(ptype)) rank += 0.18;
       return {
         rank, plate, raw_ocr: text, plate_type: ptype,
         ocr_confidence: +ocrP.toFixed(4),
@@ -541,6 +647,9 @@
         bbox: [Math.round(box[0]), Math.round(box[1]), Math.round(box[2] - box[0]), Math.round(box[3] - box[1])],
         destack: mode !== "raw",
         source: b.src,
+        color,
+        mode,
+        band_top: bandTop,
       };
     }
 
@@ -548,11 +657,34 @@
       return (b.x2 - b.x1) / Math.max(1, b.y2 - b.y1);
     }
 
+    function asUnsupported(rec, note) {
+      return {
+        ...rec,
+        plate: rec.raw_ocr || rec.plate || "",
+        plate_type: "UNSUPPORTED",
+        review_status: "manual",
+        note: note || "series not in OCR training set (private T / motorcycle MC only)",
+      };
+    }
+
+    function sameBox(a, b) {
+      if (!a.bbox || !b.bbox) return false;
+      return Math.abs(a.bbox[0] - b.bbox[0]) < 16
+        && Math.abs(a.bbox[1] - b.bbox[1]) < 16
+        && Math.abs(a.bbox[2] - b.bbox[2]) < 24
+        && Math.abs(a.bbox[3] - b.bbox[3]) < 24;
+    }
+
+    function topLooksGov(top) {
+      const t = (top || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^5/, "S").replace(/^0/, "O");
+      return t.length >= 2 && !/^T/.test(t) && !/^MC/.test(t) && /^[A-Z]{2,4}/.test(t);
+    }
+
     async function bestFromBoxes(img, boxes, minOcr) {
       const cands = [];
       for (const raw of boxes) {
         const two = plateAspect(raw) < 3.6;
-        const modes = two ? ["destack", "half", "destackL", "raw"] : ["raw"];
+        const modes = two ? ["bands", "destack", "half", "destackL", "raw"] : ["raw", "bands"];
         const padded = padBox(raw, img, two ? 0.10 : 0.04);
         for (const b of [raw, padded]) {
           for (const mode of modes) {
@@ -561,9 +693,22 @@
           }
         }
       }
-      const valid = cands.filter((c) => c.plate_type !== "UNKNOWN");
-      valid.sort((a, b) => b.ocr_confidence - a.ocr_confidence || b.rank - a.rank);
-      return valid[0] || null;
+      if (!cands.length) return null;
+      const other = cands.filter((c) => otherKnownType(c.plate_type));
+      other.sort((a, b) => b.rank - a.rank || b.ocr_confidence - a.ocr_confidence);
+      if (other[0]) return other[0];
+      const trained = cands.filter((c) => trainedType(c.plate_type));
+      trained.sort((a, b) => b.ocr_confidence - a.ocr_confidence || b.rank - a.rank);
+      if (trained[0] && trained[0].ocr_confidence >= 0.62) {
+        const band = cands.find((c) => c.mode === "bands" && c.band_top && sameBox(c, trained[0]));
+        if (trained[0].plate_type === "PRIVATE" && band && topLooksGov(band.band_top)) {
+          if (otherKnownType(band.plate_type)) return band;
+          return asUnsupported(band, "top line is not T — private T-plate discarded");
+        }
+        return trained[0];
+      }
+      const uns = cands.find((c) => c.plate_type === "UNSUPPORTED") || trained[0] || cands[0];
+      return asUnsupported(uns);
     }
 
     async function recognize(img) {
@@ -575,13 +720,14 @@
         boxes = boxes.concat(extra);
       }
       let best = await bestFromBoxes(img, boxes, 0.35);
-      if (!best || best.plate_type === "UNKNOWN") {
+      const usable = (p) => p && (trainedType(p.plate_type) || otherKnownType(p.plate_type));
+      if (!usable(best)) {
         const bright = await bestFromBoxes(img, brightBoxes(img), 0.55);
-        if (bright && bright.plate_type !== "UNKNOWN") best = bright;
+        if (usable(bright)) best = bright;
       }
-      if ((!best || best.plate_type === "UNKNOWN") && looksLikePlateCrop(img)) {
+      if (!usable(best) && looksLikePlateCrop(img)) {
         const cropBest = await bestFromBoxes(img, [{ x1: 0, y1: 0, x2: img.width, y2: img.height, conf: 0.3, src: "crop" }], 0.4);
-        if (cropBest && cropBest.plate_type !== "UNKNOWN") best = cropBest;
+        if (usable(cropBest)) best = cropBest;
       }
       if (!best || best.plate_type === "UNKNOWN") return [];
       return [best];
@@ -590,6 +736,7 @@
     function showPlates(plates) {
       const el = $("plate");
       const top = plates[0];
+      el.classList.remove("miss", "unsupported", "gov", "special");
       if (!top) {
         el.textContent = "No plate found";
         el.classList.add("miss");
@@ -597,8 +744,20 @@
         $("json").textContent = "[]";
         return;
       }
-      el.classList.remove("miss");
-      el.textContent = formatPlate(top.plate || "");
+      if (top.plate_type === "UNSUPPORTED" || top.plate_type === "UNKNOWN") {
+        el.classList.add("unsupported");
+        el.textContent = "Layout not in training set";
+        $("summary").innerHTML =
+          "<strong>Type:</strong> unsupported" +
+          " &nbsp; <strong>Route:</strong> manual" +
+          "<br>A plate box was found, but this series (government SM, red/force, diplomatic, …) was almost absent from the OCR data. A private T-plate guess was discarded." +
+          "<br>Raw OCR: <code>" + (top.raw_ocr || "—") + "</code>";
+        $("json").textContent = JSON.stringify(plates, null, 2);
+        return;
+      }
+      if (top.plate_type === "GOVERNMENT") el.classList.add("gov");
+      if (top.plate_type === "SPECIAL") el.classList.add("special");
+      el.textContent = formatPlate(top.plate || "", top.plate_type);
       const badge = { auto_accept: "auto accept", review: "review", manual: "manual" }[top.review_status] || "—";
       $("summary").innerHTML =
         "<strong>Type:</strong> " + (top.plate_type || "—") +
@@ -664,7 +823,7 @@
       vis.hidden = true;
       hint.hidden = false;
       $("plate").textContent = "—";
-      $("plate").classList.remove("miss");
+      $("plate").classList.remove("miss", "unsupported", "gov", "special");
       $("summary").textContent = "Upload a photo after the models finish loading.";
       $("json").textContent = "[]";
       file.value = "";
