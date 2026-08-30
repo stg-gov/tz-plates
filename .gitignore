@@ -30,16 +30,25 @@ datasets/annotations/plates/*
 datasets/annotations/vehicles/*
 !datasets/**/.gitkeep
 
-# Model weights
+# Notebooks
+.ipynb_checkpoints/
+
+# Model weights and training artifacts
 *.pt
 *.pth
 *.onnx
 *.engine
+*.ckpt
+yolov8*.pt
+yolo11*.pt
 checkpoints/
 models/**/*.pt
 models/**/*.onnx
-# ...but keep the small (~5 MB) open-source pretrained plate detector in-repo so
-# training boxes without internet can still bootstrap. Re-fetch: tools/fetch_pretrained.py
+models/ocr/v1/*
+!models/ocr/v1/.gitkeep
+# Keep the small (~5 MB) open-source pretrained plate detector so
+# training boxes without internet can still bootstrap.
+# Re-fetch: python tools/fetch_pretrained.py
 !models/plate_detector/v1/plate_yolo.pt
 lightning_logs/
 wandb/
