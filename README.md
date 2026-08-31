@@ -42,6 +42,172 @@ every degraded stage is listed in `warnings`. Install extras + train the models
 
 - Live plate reader (in-browser ONNX): [huggingface.co/spaces/Japhari/tz-alpr](https://huggingface.co/spaces/Japhari/tz-alpr)
 - OCR + plate-detector weights: [huggingface.co/Japhari/tz-alpr-ocr](https://huggingface.co/Japhari/tz-alpr-ocr)
+- GPU runbook: [`GPU_TRAINING.md`](GPU_TRAINING.md) · measured numbers: [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md)
+
+---
+
+## How tz-alpr works — training to running
+
+The product is a Tanzanian plate reader. You start from labelled vehicle-rear
+photos, train a small CRNN+CTC OCR model on plate crops, then run the same
+pipeline in three places: the FastAPI service, `tools/predict_image.py`, and
+the static Hugging Face Space (ONNX in the browser).
+
+```
+labelled photos + labels.jsonl
+        │
+        ▼
+   audit (drop bad / duplicate / unsupported)
+        │
+        ▼
+   plate YOLO crop  →  destack two-line  →  OCR CSV + leakage-safe splits
+        │
+        ▼
+   synthetic TZ plates (pretrain)     overfit check (must reach ~100% on 512 crops)
+        │
+        ▼
+   stage 1: pretrain CRNN on synthetic
+   stage 2: fine-tune on real crops (+ some synthetic)
+        │
+        ▼
+   evaluate + Platt-calibrate confidence
+        │
+        ▼
+   ocr_crnn.pt  →  ocr_crnn.onnx  →  pack / push Hub
+        │
+        ├── FastAPI  POST /v1/plate-reader     (PyTorch or ONNX Runtime)
+        ├── CLI      tools/predict_image.py
+        └── Space    spaces/tz-alpr-static     (ONNX Runtime Web, no server GPU)
+```
+
+### What happens when you read a photo
+
+Same stages in Python (`src/tz_alpr/pipeline/alpr.py`) and in the browser
+(`spaces/tz-alpr-static/index.html`):
+
+1. **Find the plate** — YOLO plate detector on the frame (and, in the API, on
+   each vehicle crop first). Classical HSV/contour detection is the no-weights
+   fallback.
+2. **Rectify** — crop the box, deskew tilt, **destack** two-line Tanzanian
+   plates (`T 336` over `CAG` → one wide `T336CAG` strip). OCR never sees a
+   stacked two-line image.
+3. **OCR** — grayscale `1×32×256` into CRNN (CNN → BiLSTM → CTC). Greedy CTC
+   decode returns the string plus per-character posteriors.
+4. **Tanzania rules** — classify `T###ABC` as PRIVATE, `MC###ABC` as
+   MOTORCYCLE; apply `0↔O` / `1↔I` / `5↔S` swaps only when the schema and the
+   OCR posteriors agree. Government, special, and diplomatic series were almost
+   absent from training, so they are marked **unsupported** instead of being
+   forced into a T-plate.
+5. **Confidence** — fuse detector + OCR + rule scores, apply Platt scaling,
+   route `≥0.90` auto-accept / `0.70–0.89` review / `<0.70` manual.
+
+The video path (`POST /v1/video`) reuses that `recognize()` step per track,
+then votes across frames (ByteTrack + temporal OCR). It is not used by the
+static Space.
+
+### What the model is trained on
+
+Training data is **not in git**. On the training machine it sits next to the
+repo:
+
+```
+tz-plates/
+  labeled_images/     # ~26k phone photos of vehicle rears
+  labels.jsonl        # {"image":"….jpg","plate_text":"T336CAG","confidence":1.0}
+```
+
+Almost all labels are private yellow `T###ABC` (~24.5k) and motorcycle / bajaji
+`MC###ABC` (~1.6k). Splits are **grouped by plate identity** so the same plate
+never appears in both train and test. `hard_test` holds night, tiny, motorcycle,
+and low-confidence crops.
+
+Do not copy originals into `datasets/`. `prepare_dataset.py` writes crops,
+`ocr_annotations.csv`, and weak YOLO boxes there.
+
+### Train (one command on a GPU box)
+
+```bash
+pip install -e ".[train,detect,onnx,dev]"
+bash scripts/gpu_train.sh
+```
+
+That script is the source of truth. In order:
+
+| Step | Command (also in the script) | Writes |
+|---|---|---|
+| Fetch plate YOLO | `python tools/fetch_pretrained.py` | `models/plate_detector/v1/plate_yolo.pt` |
+| Audit labels | `python tools/audit_labeled_images.py` | `datasets/annotations/accepted_labels.jsonl` |
+| Crop + split | `python tools/prepare_dataset.py --workers 8` | `datasets/processed/plate_crops/`, `datasets/ocr/ocr_annotations.csv` |
+| Analyse | `python tools/analyze_dataset.py` | `reports/dataset_analysis.md` |
+| Synthetic plates | `python tools/generate_tanzania_plates.py --count 60000` | `datasets/synthetic/generated_plates_v2/` |
+| Overfit check | `python tools/overfit_check.py --device cuda` | abort if the model cannot memorise 512 clean crops |
+| Pretrain | `python training/train_ocr.py --stage pretrain` | `models/ocr/v1/ocr_pretrained.pt` |
+| Fine-tune | `python training/train_ocr.py --stage finetune --init …` | `models/ocr/v1/ocr_crnn.pt`, `checkpoints/ocr-finetune-*.ckpt` |
+| Eval + calibrate | `python training/evaluate.py --split test --calibrate` | `reports/eval_*.json`, `models/ocr/v1/confidence_calibration.json` |
+| Export ONNX | `python tools/export_onnx.py ocr --ckpt …` | `models/ocr/v1/ocr_crnn.onnx` |
+| Pack Hub folder | `python tools/package_hf_model.py` | `hf_export/tz-alpr-ocr/` (does not upload) |
+
+Optional plate-detector train (after you have verified boxes):
+
+```bash
+python training/train_plate_detector.py --data datasets/annotations/plates/plates.yaml
+```
+
+First measured GPU run (30 Aug 2026, RTX 5090): test exact-match **73.8%**,
+char-acc **88.9%**. Full tables: [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md).
+Prerequisites, Docker, and troubleshooting: [`GPU_TRAINING.md`](GPU_TRAINING.md).
+
+More labelled photos later — add files to `labeled_images/` and rows to
+`labels.jsonl`, then `bash scripts/retrain.sh` (fine-tunes from the last
+`ocr_crnn.pt` if the data fingerprint changed).
+
+### Publish weights
+
+```bash
+hf auth login
+HF_REPO=Japhari/tz-alpr-ocr bash scripts/push_hf.sh
+```
+
+Uploads the packed OCR checkpoint, configs, and model card — not images.
+
+The live demo Space is a separate static repo (`spaces/tz-alpr-static/`):
+`index.html` plus `plate_yolo.onnx` and `ocr_crnn.onnx`. Upload a new
+`index.html` with:
+
+```bash
+hf upload Japhari/tz-alpr spaces/tz-alpr-static/index.html --repo-type space
+```
+
+### Run the trained model
+
+**1. In the browser (no GPU, no Python)** — open
+[huggingface.co/spaces/Japhari/tz-alpr](https://huggingface.co/spaces/Japhari/tz-alpr)
+and upload a live vehicle-rear photo (not a screenshot of a screen). Models
+download once; ONNX Runtime Web runs YOLO + CRNN in WASM.
+
+**2. From this repo, one image**
+
+```bash
+pip install -e ".[detect,onnx]"
+export TZ_ALPR_OCR_WEIGHTS=models/ocr/v1/ocr_crnn.pt
+export TZ_ALPR_OCR_ONNX=models/ocr/v1/ocr_crnn.onnx          # optional
+export TZ_ALPR_PLATE_DETECTOR_WEIGHTS=models/plate_detector/v1/plate_yolo.pt
+export TZ_ALPR_RUNTIME=onnx                                  # or torch
+python tools/predict_image.py path/to/car.jpg
+```
+
+**3. HTTP API**
+
+```bash
+uvicorn tz_alpr.api.main:app --port 8080
+# or: docker compose up --build alpr-api
+
+curl -s -F "upload=@path/to/car.jpg" http://localhost:8080/v1/plate-reader | jq
+```
+
+A clean checkout without weights still boots: classical plate finder + null
+OCR, every degraded stage listed in `warnings`. Install extras and point the
+env vars above at trained files to make it a real reader.
 
 ---
 
@@ -254,11 +420,14 @@ python tools/predict_image.py labeled_images/T336CAG-0007245e981f11ee9347df11042
 
 ## Train the models on your Tanzanian dataset
 
-> **On a GPU box, use [`GPU_TRAINING.md`](GPU_TRAINING.md)** — one-command
-> `bash scripts/gpu_train.sh` (audit → crop → **dataset analysis** → synthetic →
-> overfit check → pretrain → fine-tune → evaluate → pack for Hugging Face).
-> More photos later: `bash scripts/retrain.sh`. Hub upload: `HF_REPO=you/tz-alpr-ocr bash scripts/push_hf.sh`.
-> Measured numbers: [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md) · [`DATASET_ANALYSIS.md`](DATASET_ANALYSIS.md).
+The story from labelled photos to a running reader is in
+**[How tz-alpr works](#how-tz-alpr-works--training-to-running)** above.
+This section is the command checklist. On a GPU box prefer
+[`GPU_TRAINING.md`](GPU_TRAINING.md) (`bash scripts/gpu_train.sh`).
+More photos later: `bash scripts/retrain.sh`. Hub upload:
+`HF_REPO=you/tz-alpr-ocr bash scripts/push_hf.sh`.
+Measured numbers: [`TRAINING_RESULTS.md`](TRAINING_RESULTS.md) ·
+[`DATASET_ANALYSIS.md`](DATASET_ANALYSIS.md).
 
 Install training extras once:
 
