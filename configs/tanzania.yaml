@@ -44,7 +44,7 @@ categories:
     confidence_bonus: 0.04
 
   - name: GOVERNMENT
-    description: "Government of Tanzania vehicles. Plain 'SU' / 'SM' style, 2–3 letters + 3–5 digits."
+    description: "Government of Tanzania vehicles. Plain 'SU' / 'SM' style, plus municipal bajaji MCC + digits."
     regex: '^[A-Z]{2,3}\d{3,5}$'
     normalized_regex: '^[A-Z]{2,3}[0-9]{3,5}$'
     display_format: "{raw}"

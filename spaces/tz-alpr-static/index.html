@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1eb53a" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <title>tz-alpr — Tanzanian plates · Japhari</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;600;800&family=IBM+Plex+Mono:wght@600&display=swap" rel="stylesheet" />
@@ -24,6 +26,8 @@
       font-family: "DM Sans", system-ui, sans-serif;
       color: var(--ink);
       background: var(--bg);
+      overflow-x: hidden;
+      -webkit-text-size-adjust: 100%;
     }
     .stripe {
       height: 8px;
@@ -58,7 +62,37 @@
       gap: 18px;
       padding-bottom: 28px;
     }
-    @media (max-width: 820px) { .layout { grid-template-columns: 1fr; } }
+    @media (max-width: 820px) {
+      .layout { grid-template-columns: 1fr; gap: 12px; padding-bottom: 18px; }
+      header, main, footer {
+        padding-left: max(16px, env(safe-area-inset-left));
+        padding-right: max(16px, env(safe-area-inset-right));
+      }
+      header { padding-top: max(16px, env(safe-area-inset-top)); }
+      h1 { font-size: 1.85rem; }
+      .lead { font-size: 0.95rem; margin-bottom: 12px; }
+      .status { flex-wrap: wrap; margin-bottom: 12px; }
+      .card { padding: 12px; border-radius: 14px; }
+      .drop { min-height: 200px; }
+      .drop .hint { padding: 16px 14px; max-width: 100%; }
+      .drop canvas:not([hidden]), .drop img.preview { max-height: min(48vh, 320px); }
+      .actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 3;
+        display: flex;
+        gap: 10px;
+        margin: 10px -12px -12px;
+        padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+        background: var(--card);
+        border-top: 1px solid #e6ebe4;
+      }
+      .actions button { flex: 1; min-height: 48px; font-size: 1.02rem; }
+      .ex { min-height: 40px; }
+      .plate { letter-spacing: 0.08em; padding: 12px 10px; }
+      pre { max-height: 220px; font-size: 0.75rem; }
+      footer { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+    }
     .card {
       background: var(--card);
       border-radius: 16px;
@@ -80,11 +114,16 @@
       background: #fafcf8;
     }
     .drop.drag { border-color: var(--green); background: #eefae9; }
-    .drop canvas, .drop img.preview {
+    .drop canvas:not([hidden]), .drop img.preview {
       max-width: 100%;
       max-height: 420px;
+      width: auto;
+      height: auto;
       display: block;
+      margin: 0 auto;
+      background: #fafcf8;
     }
+    .drop canvas[hidden] { display: none !important; }
     .drop .hint { padding: 24px; }
     input[type=file] { display: none; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
@@ -95,9 +134,30 @@
       font-weight: 700;
       font-family: inherit;
       cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
     button.primary { background: var(--green); color: #fff; }
     button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    button.primary.loading,
+    button.primary.loading:disabled {
+      opacity: 1;
+      cursor: wait;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    button.primary.loading::before {
+      content: "";
+      width: 16px;
+      height: 16px;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
     button.ghost { background: var(--ink); color: #fff; }
     .ex {
       background: #fff;
@@ -105,6 +165,7 @@
       color: var(--ink);
       font-size: 0.88rem;
     }
+    .ex:disabled { opacity: 0.5; cursor: wait; }
     .plate {
       margin: 8px 0 12px;
       padding: 14px 18px;
@@ -117,7 +178,7 @@
       text-align: center;
       box-shadow: 4px 4px 0 #111;
     }
-    .plate.miss, .plate.unsupported {
+    .plate.miss, .plate.unsupported, .plate.invalid {
       background: #eef1ee;
       box-shadow: none;
       letter-spacing: 0.02em;
@@ -157,7 +218,7 @@
   <header>
     <div class="flag">🇹🇿</div>
     <h1>tz-alpr</h1>
-    <p class="lead">Upload a vehicle-rear photo or a plate crop. Trained on private <strong>T ### ABC</strong> and motorcycle <strong>MC ### ABC</strong>. Other series (government SM, red DFPA, diplomatic) are labelled unsupported instead of forced into a T-plate.</p>
+    <p class="lead">Upload a live photo of the vehicle or a tight plate crop — not a screenshot, and not a photo of a phone, print, or another picture. Tilted shots are deskewed. Trained on private <strong>T ### ABC</strong> and motorcycle <strong>MC ### ABC</strong>.</p>
     <div class="status" id="load-status">
       <span class="dot" id="dot"></span>
       <span id="load-text">Loading models…</span>
@@ -168,12 +229,12 @@
     <div class="layout">
       <section class="card">
         <label class="drop" id="drop" for="file">
-          <div class="hint" id="hint">Drop a photo here, or click to upload<br /><small>JPG / PNG · rear of the vehicle, or a tight plate crop</small></div>
+          <div class="hint" id="hint">Tap to take a photo or choose from gallery<br /><small>JPG / PNG · rear of the vehicle, or a tight plate crop</small></div>
           <canvas id="vis" hidden></canvas>
         </label>
         <input id="file" type="file" accept="image/*" />
-        <div class="row">
-          <button class="primary" id="run" disabled>Read plate</button>
+        <div class="row actions">
+          <button class="primary" id="run" type="button" disabled>Read plate</button>
           <button class="ghost" id="clear" type="button">Clear</button>
         </div>
         <p class="meta" style="margin:14px 0 8px">Examples</p>
@@ -181,6 +242,8 @@
           <button class="ex" data-src="examples/T336CAG.jpg" type="button">T336CAG · car</button>
           <button class="ex" data-src="examples/T759CQS.jpg" type="button">T759CQS · two-line</button>
           <button class="ex" data-src="examples/MC474JRR.jpg" type="button">MC474JRR · motorcycle</button>
+          <button class="ex" data-src="examples/T588BSD.jpg" type="button">T588BSD · tilted</button>
+          <button class="ex" data-src="examples/pip-screenshot.jpg" type="button">screenshot · invalid</button>
         </div>
       </section>
       <section class="card">
@@ -255,7 +318,7 @@
       $("prog").hidden = true;
       $("dot").classList.add("ready");
       $("load-text").textContent = "Models ready — upload a photo or pick an example.";
-      runBtn.disabled = false;
+      runBtn.disabled = !currentImg;
     }
 
     function letterbox(img) {
@@ -310,6 +373,49 @@
       return c;
     }
 
+    function yellowMaskStats(src) {
+      const c = asCanvas(src);
+      const w = c.width, h = c.height;
+      if (w < 8 || h < 8) return null;
+      const rgba = c.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+      let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+      let minx = w, miny = h, maxx = 0, maxy = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+          if (!(r > 145 && g > 125 && b < 140 && (r + g) > b * 2.0)) continue;
+          n++;
+          sx += x; sy += y;
+          sxx += x * x; syy += y * y; sxy += x * y;
+          if (x < minx) minx = x;
+          if (y < miny) miny = y;
+          if (x > maxx) maxx = x;
+          if (y > maxy) maxy = y;
+        }
+      }
+      if (n < 28) return null;
+      const mx = sx / n, my = sy / n;
+      let deg = 0.5 * Math.atan2(2 * (sxy / n - mx * my), (sxx / n - mx * mx) - (syy / n - my * my)) * 180 / Math.PI;
+      if (deg > 62) deg -= 90;
+      if (deg < -62) deg += 90;
+      if (Math.abs(deg) < 5) deg = 0;
+      return { deg: Math.round(deg), minx, miny, maxx, maxy, n };
+    }
+
+    function prepPlateCrop(src) {
+      const st = yellowMaskStats(src);
+      if (!st) return src;
+      let crop = Math.abs(st.deg) >= 5 ? rotateImage(src, -st.deg) : src;
+      const st2 = yellowMaskStats(crop) || (crop === src ? st : null);
+      if (!st2) return crop;
+      const bw = st2.maxx - st2.minx + 1, bh = st2.maxy - st2.miny + 1;
+      if (bw < 24 || bh < 12) return crop;
+      const padX = Math.max(2, bw * 0.06);
+      const padY = Math.max(2, bh * 0.10);
+      return cropCanvas(crop, st2.minx - padX, st2.miny - padY, st2.maxx + 1 + padX, st2.maxy + 1 + padY);
+    }
+
     function destackCanvas(src, mode) {
       const h = src.height, w = src.width;
       let topY1, topY2, botY1, botY2;
@@ -339,7 +445,7 @@
     }
 
     function preprocessOcr(img, box, mode) {
-      let crop = cropCanvas(img, box[0], box[1], box[2], box[3]);
+      let crop = prepPlateCrop(cropCanvas(img, box[0], box[1], box[2], box[3]));
       if (mode === "destackL") {
         const cut = Math.floor(crop.width * 0.08);
         crop = cropCanvas(crop, cut, 0, crop.width, crop.height);
@@ -386,8 +492,8 @@
       if (/^[A-Z]{4}\d{3,4}$/.test(t) && !t.startsWith("MC")) {
         return { plate: t, type: "SPECIAL" };
       }
-      // SM 11736 / SU 1234. Exclude lone T-prefix so T-hallucinations stay PRIVATE or UNKNOWN.
-      if (/^[A-Z]{2,3}\d{3,5}$/.test(t) && t[0] !== "T" && !t.startsWith("MC")) {
+      // SM 11736 / SU 1234 / MCC 0419. Motorcycle MC###AAA is already handled above.
+      if (/^[A-Z]{2,3}\d{3,5}$/.test(t) && t[0] !== "T") {
         return { plate: t, type: "GOVERNMENT" };
       }
       if (/^\d{1,3}[A-Z]{2}\d{2,4}$/.test(t)) {
@@ -433,8 +539,9 @@
         else if (Y > 170 && Math.abs(r - g) < 40 && Math.abs(g - bl) < 40) white++;
       }
       const fr = red / n, fy = yellow / n, fw = white / n;
-      if (fr > 0.16 && fr >= fy) return "red";
-      if (fy > 0.16) return "yellow";
+      // Yellow plates pick up orange/bumper pixels; red must clearly dominate.
+      if (fr > 0.22 && fr > fy * 1.45 && fr > fw) return "red";
+      if (fy > 0.14) return "yellow";
       if (fw > 0.22) return "white";
       return "other";
     }
@@ -477,18 +584,115 @@
       for (let i = 0; i < 300; i++) {
         const o = i * 6;
         const conf = det[o + 4];
-        if (conf < 0.12) continue;
+        if (conf < 0.08) continue;
         const x1 = (det[o] - left) / scale + ox;
         const y1 = (det[o + 1] - top) / scale + oy;
         const x2 = (det[o + 2] - left) / scale + ox;
         const y2 = (det[o + 3] - top) / scale + oy;
         const bw = x2 - x1, bh = y2 - y1;
-        if (bw < 24 || bh < 12) continue;
+        if (bw < 16 || bh < 8) continue;
         const asp = bw / Math.max(1, bh);
-        if (asp < 0.6 || asp > 6) continue;
+        if (asp < 0.45 || asp > 7) continue;
+        const areaFrac = (bw * bh) / Math.max(1, img.width * img.height);
+        if (areaFrac > 0.55) continue;
         boxes.push({ x1, y1, x2, y2, conf, src: "yolo" });
       }
       return boxes;
+    }
+
+    function asCanvas(img) {
+      if (img && img.getContext) return img;
+      const c = document.createElement("canvas");
+      c.width = img.width;
+      c.height = img.height;
+      c.getContext("2d").drawImage(img, 0, 0);
+      return c;
+    }
+
+    function deskewCoverView(img, rot, deg, plates) {
+      const w = img.width, h = img.height;
+      const rad = Math.abs(deg) * Math.PI / 180;
+      const inset = 0.55 * Math.min(rot.width, rot.height) * Math.abs(Math.sin(rad));
+      const availW = Math.max(48, rot.width - 2 * inset);
+      const availH = Math.max(48, rot.height - 2 * inset);
+      let srcW = availW;
+      let srcH = srcW * (h / w);
+      if (srcH > availH) {
+        srcH = availH;
+        srcW = srcH * (w / h);
+      }
+      const sx = (rot.width - srcW) / 2;
+      const sy = (rot.height - srcH) / 2;
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      c.getContext("2d").drawImage(rot, sx, sy, srcW, srcH, 0, 0, w, h);
+      const scaleX = w / srcW;
+      const scaleY = h / srcH;
+      const mapped = plates.map((p) => {
+        if (!p.bbox) return p;
+        const [x, y, bw, bh] = p.bbox;
+        return {
+          ...p,
+          bbox: [
+            Math.round((x - sx) * scaleX),
+            Math.round((y - sy) * scaleY),
+            Math.round(bw * scaleX),
+            Math.round(bh * scaleY),
+          ],
+        };
+      });
+      return { view: c, plates: mapped };
+    }
+
+    function rotateImage(img, deg) {
+      const src = asCanvas(img);
+      if (!deg) return src;
+      const rad = deg * Math.PI / 180;
+      const w = src.width, h = src.height;
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(Math.abs(w * Math.cos(rad)) + Math.abs(h * Math.sin(rad))));
+      c.height = Math.max(1, Math.round(Math.abs(w * Math.sin(rad)) + Math.abs(h * Math.cos(rad))));
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fafcf8";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.translate(c.width / 2, c.height / 2);
+      ctx.rotate(rad);
+      ctx.drawImage(src, -w / 2, -h / 2);
+      return c;
+    }
+
+    function estimateTiltDeg(img) {
+      const maxW = 240;
+      const s = maxW / Math.max(1, img.width);
+      const w = maxW, h = Math.max(1, Math.round(img.height * s));
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      const rgba = ctx.getImageData(0, 0, w, h).data;
+      let n = 0, sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+          const yellow = r > 145 && g > 125 && b < 140 && (r + g) > b * 2.0;
+          if (!yellow) continue;
+          n++;
+          sx += x; sy += y;
+          sxx += x * x; syy += y * y; sxy += x * y;
+        }
+      }
+      if (n < 40) return 0;
+      const mx = sx / n, my = sy / n;
+      const covxx = sxx / n - mx * mx;
+      const covyy = syy / n - my * my;
+      const covxy = sxy / n - mx * my;
+      let deg = 0.5 * Math.atan2(2 * covxy, covxx - covyy) * 180 / Math.PI;
+      if (deg > 62) deg -= 90;
+      if (deg < -62) deg += 90;
+      return Math.abs(deg) < 6 ? 0 : Math.round(deg);
     }
 
     function brightBoxes(img) {
@@ -502,7 +706,7 @@
       ctx.drawImage(img, 0, 0, w, h);
       const rgba = ctx.getImageData(0, 0, w, h).data;
       const mask = new Uint8Array(w * h);
-      const y0 = Math.floor(h * 0.28);
+      const y0 = 0;
       for (let y = y0; y < h; y++) {
         for (let x = 0; x < w; x++) {
           const i = (y * w + x) * 4;
@@ -540,7 +744,7 @@
           }
           const bw = maxx - minx + 1, bh = maxy - miny + 1;
           const asp = bw / Math.max(1, bh);
-          if (n < 90 || asp < 0.75 || asp > 4.8 || bw < 16 || bh < 10) continue;
+          if (n < 40 || asp < 0.5 || asp > 6.5 || bw < 10 || bh < 6) continue;
           const box = { x1: minx / s, y1: miny / s, x2: (maxx + 1) / s, y2: (maxy + 1) / s, conf: 0.2, src: "bright" };
           if (((box.x2 - box.x1) * (box.y2 - box.y1)) / areaImg > 0.22) continue;
           boxes.push(box);
@@ -552,7 +756,16 @@
     function looksLikePlateCrop(img) {
       const a = img.width / img.height;
       if (img.height <= 48 && img.width >= 80) return true;
-      return a >= 0.9 && a <= 8 && img.width <= 720 && img.height <= 420;
+      if (a >= 0.9 && a <= 8 && img.width <= 720 && img.height <= 420) return true;
+      if (a < 0.7 || a > 5.5) return false;
+      const { w, h, data } = sampleRgba(img, 160);
+      let ylw = 0;
+      const n = w * h;
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i], g = data[i + 1], b = data[i + 2];
+        if (r > 145 && g > 125 && b < 140 && (r + g) > b * 2.0) ylw++;
+      }
+      return ylw / Math.max(1, n) > 0.18;
     }
 
     function padBox(b, img, r) {
@@ -574,6 +787,49 @@
       return greedyCtc(logits);
     }
 
+    function coerceDigits(s) {
+      return s.replace(/O/g, "0").replace(/D/g, "0").replace(/Q/g, "0")
+        .replace(/I/g, "1").replace(/L/g, "1");
+    }
+
+    function coerceLetters(s) {
+      return s.replace(/0/g, "O").replace(/1/g, "I").replace(/5/g, "S");
+    }
+
+    function stitchPrivate(topText, botText) {
+      let top = (topText || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      let bot = (botText || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (/^MC?T\d/.test(top)) top = top.replace(/^MC?/, "");
+      if (top[0] === "T") {
+        const rest = coerceDigits(top.slice(1));
+        const digits = (rest.match(/^\d{3}/) || [""])[0];
+        if (digits.length === 3) {
+          const fromBot = coerceLetters(bot).replace(/[^A-Z]/g, "");
+          const fromTop = coerceLetters(rest.slice(3)).replace(/[^A-Z]/g, "");
+          const letters = (fromBot.length >= 3 ? fromBot : fromTop + fromBot);
+          if (letters.length >= 3) return classify("T" + digits + letters.slice(0, 3));
+        }
+      }
+      const topDigits = coerceDigits(top);
+      const botLetters = coerceLetters(bot).replace(/[^A-Z]/g, "");
+      if (/^\d{3}$/.test(topDigits) && botLetters.length >= 3) {
+        return classify("T" + topDigits + botLetters.slice(0, 3));
+      }
+      const mc = top.replace(/O/g, "0");
+      if (/^MC\d{3}$/.test(mc) && botLetters.length >= 3) {
+        return classify(mc + botLetters.slice(0, 3));
+      }
+      return classify(top + bot);
+    }
+
+    function stitchLines(topText, botText) {
+      const priv = stitchPrivate(topText, botText);
+      if (trainedType(priv.type)) return priv;
+      const gov = stitchGov(topText, botText);
+      if (gov.type !== "UNKNOWN") return gov;
+      return priv;
+    }
+
     function stitchGov(topText, botText) {
       let top = topText.toUpperCase().replace(/[^A-Z0-9]/g, "");
       const bot = botText.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -593,14 +849,14 @@
       const bw = b.x2 - b.x1, bh = b.y2 - b.y1;
       let text, ocrP, bandTop = "";
       if (mode === "bands") {
-        const crop = cropCanvas(img, box[0], box[1], box[2], box[3]);
+        const crop = prepPlateCrop(cropCanvas(img, box[0], box[1], box[2], box[3]));
         const h = crop.height, w = crop.width;
         const top = cropCanvas(crop, 0, Math.floor(0.04 * h), w, Math.floor(0.50 * h));
         const bot = cropCanvas(crop, 0, Math.floor(0.42 * h), w, Math.floor(0.96 * h));
         const a = await ocrCanvas(top);
         const z = await ocrCanvas(bot);
         bandTop = (a.text || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-        const stitched = stitchGov(a.text, z.text);
+        const stitched = stitchLines(a.text, z.text);
         text = stitched.type !== "UNKNOWN" ? stitched.plate : (a.text + z.text).toUpperCase().replace(/[^A-Z0-9]/g, "");
         ocrP = (a.conf + z.conf) / 2;
         if (ocrP < minOcr * 0.8 && text.length < 5) return null;
@@ -614,22 +870,29 @@
         if (ocrP < minOcr) return null;
       }
       let classified = classify(text);
-      if (mode === "bands" && classified.type === "UNKNOWN") classified = stitchGov(text.slice(0, 2), text.slice(2));
+      if (mode === "bands" && classified.type === "UNKNOWN") classified = stitchLines(text.slice(0, 2), text.slice(2));
       let plate = classified.plate;
       let ptype = classified.type;
-      // Wide yellow car plates: flag + "T" is often read as "MC".
-      if (mode !== "raw" && mode !== "bands" && ptype === "MOTORCYCLE" && asp >= 1.85 && plate.startsWith("MC") && plate.length === 8) {
+      const areaFrac = (bw * bh) / Math.max(1, img.width * img.height);
+      if (areaFrac > 0.42 && ocrP < 0.60) return null;
+      // Wide single-line yellow cars: flag + "T" is often read as "MC".
+      // Two-line bajaji MC plates are only moderately wide and often white — keep MC.
+      const destacked = mode !== "raw" && mode !== "bands";
+      const wideCar = destacked && asp >= 2.45 && color === "yellow";
+      if (wideCar && ptype === "MOTORCYCLE" && plate.startsWith("MC") && plate.length === 8) {
         const alt = classify("T" + plate.slice(2));
         if (alt.type === "PRIVATE") {
           plate = alt.plate;
           ptype = "PRIVATE";
         }
       }
-      if (mode !== "raw" && mode !== "bands" && ptype === "MOTORCYCLE" && asp >= 1.85) return null;
-      // Red force / agency plates were not in the train set; never emit a yellow T/MC.
-      if (color === "red" && trainedType(ptype)) ptype = "UNSUPPORTED";
-      // Weak private reads on tiny boxes are almost always invented T-strings.
+      if (wideCar && ptype === "MOTORCYCLE") return null;
+      // Red force plates were not in the train set. High-OCR yellow T/MC on a
+      // mis-coloured crop (bumper chrome) must not be discarded.
+      if (color === "red" && trainedType(ptype) && ocrP < 0.78) ptype = "UNSUPPORTED";
+      // Weak private reads on tiny boxes / chrome logos are invented T-strings.
       if (ptype === "PRIVATE" && (ocrP < 0.62 || bw < 56 || bh < 22)) ptype = "UNSUPPORTED";
+      if (ptype === "PRIVATE" && color !== "yellow" && ocrP < 0.88) ptype = "UNSUPPORTED";
       const fused = b.conf > 0
         ? Math.cbrt(Math.max(b.conf, 1e-3) * Math.max(ocrP, 1e-3) * (trainedType(ptype) || otherKnownType(ptype) ? 0.92 : 0.55))
         : ocrP;
@@ -638,6 +901,10 @@
       else if (trainedType(ptype)) rank += 0.22;
       else rank -= 0.35;
       if (mode === "bands" && otherKnownType(ptype)) rank += 0.18;
+      if (mode === "bands" && trainedType(ptype) && looksLikeTwoLineTop(bandTop)) rank += 0.28;
+      if (color === "yellow" || color === "white") rank += 0.08;
+      if (areaFrac > 0.18) rank -= 0.22;
+      if (areaFrac < 0.08 && (color === "yellow" || color === "white")) rank += 0.10;
       return {
         rank, plate, raw_ocr: text, plate_type: ptype,
         ocr_confidence: +ocrP.toFixed(4),
@@ -677,7 +944,12 @@
 
     function topLooksGov(top) {
       const t = (top || "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^5/, "S").replace(/^0/, "O");
-      return t.length >= 2 && !/^T/.test(t) && !/^MC/.test(t) && /^[A-Z]{2,4}/.test(t);
+      return t.length >= 2 && !/^T/.test(t) && !/^MC\d/.test(t) && /^[A-Z]{2,4}/.test(t);
+    }
+
+    function looksLikeTwoLineTop(top) {
+      const t = (top || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return /^T\d{2,3}$/.test(t) || /^MC\d{2,3}$/.test(t);
     }
 
     async function bestFromBoxes(img, boxes, minOcr) {
@@ -685,7 +957,7 @@
       for (const raw of boxes) {
         const two = plateAspect(raw) < 3.6;
         const modes = two ? ["bands", "destack", "half", "destackL", "raw"] : ["raw", "bands"];
-        const padded = padBox(raw, img, two ? 0.10 : 0.04);
+        const padded = padBox(raw, img, two ? 0.18 : 0.04);
         for (const b of [raw, padded]) {
           for (const mode of modes) {
             const rec = await scoreBox(img, b, mode, minOcr);
@@ -698,12 +970,15 @@
       other.sort((a, b) => b.rank - a.rank || b.ocr_confidence - a.ocr_confidence);
       if (other[0]) return other[0];
       const trained = cands.filter((c) => trainedType(c.plate_type));
-      trained.sort((a, b) => b.ocr_confidence - a.ocr_confidence || b.rank - a.rank);
-      if (trained[0] && trained[0].ocr_confidence >= 0.62) {
+      trained.sort((a, b) => b.rank - a.rank || b.ocr_confidence - a.ocr_confidence);
+      if (trained[0] && trained[0].ocr_confidence >= 0.55) {
+        const bandHits = cands.filter((c) => c.mode === "bands" && trainedType(c.plate_type) && looksLikeTwoLineTop(c.band_top));
+        bandHits.sort((a, b) => b.ocr_confidence - a.ocr_confidence);
+        if (bandHits[0] && bandHits[0].plate !== trained[0].plate) return bandHits[0];
         const band = cands.find((c) => c.mode === "bands" && c.band_top && sameBox(c, trained[0]));
-        if (trained[0].plate_type === "PRIVATE" && band && topLooksGov(band.band_top)) {
+        if (trainedType(trained[0].plate_type) && band && topLooksGov(band.band_top)) {
           if (otherKnownType(band.plate_type)) return band;
-          return asUnsupported(band, "top line is not T — private T-plate discarded");
+          return asUnsupported(band, "top line is not T/MC — private T-plate discarded");
         }
         return trained[0];
       }
@@ -711,7 +986,20 @@
       return asUnsupported(uns);
     }
 
-    async function recognize(img) {
+    function usablePlate(p) {
+      return p && (trainedType(p.plate_type) || otherKnownType(p.plate_type));
+    }
+
+    function strongPlate(p) {
+      if (!usablePlate(p)) return false;
+      const twoLine = p.bbox && (p.bbox[2] / Math.max(1, p.bbox[3]) < 2.8);
+      if (twoLine && p.mode !== "bands" && (p.ocr_confidence || 0) < 0.94) return false;
+      if (p.source === "yolo" && p.ocr_confidence >= 0.80) return true;
+      if (p.source !== "yolo" && p.ocr_confidence >= 0.92) return true;
+      return false;
+    }
+
+    async function recognizeOnce(img) {
       let boxes = await yoloOnImage(img, 0, 0);
       const yOff = Math.floor(img.height * 0.38);
       if (yOff > 40) {
@@ -720,28 +1008,245 @@
         boxes = boxes.concat(extra);
       }
       let best = await bestFromBoxes(img, boxes, 0.35);
-      const usable = (p) => p && (trainedType(p.plate_type) || otherKnownType(p.plate_type));
-      if (!usable(best)) {
+      if (!usablePlate(best)) {
         const bright = await bestFromBoxes(img, brightBoxes(img), 0.55);
-        if (usable(bright)) best = bright;
+        if (usablePlate(bright) && (bright.ocr_confidence >= 0.90 || !usablePlate(best) && bright.ocr_confidence >= 0.70)) best = bright;
+        else if (!best && bright) best = bright;
       }
-      if (!usable(best) && looksLikePlateCrop(img)) {
+      if (!usablePlate(best) && looksLikePlateCrop(img)) {
         const cropBest = await bestFromBoxes(img, [{ x1: 0, y1: 0, x2: img.width, y2: img.height, conf: 0.3, src: "crop" }], 0.4);
-        if (usable(cropBest)) best = cropBest;
+        if (usablePlate(cropBest)) best = cropBest;
       }
-      if (!best || best.plate_type === "UNKNOWN") return [];
-      return [best];
+      return best && best.plate_type !== "UNKNOWN" ? best : null;
+    }
+
+    function deskewAngles(img) {
+      const tilt = estimateTiltDeg(img);
+      const raw = [0, tilt, tilt + 15, tilt - 15, 30, -30, 40, -40, 20, -20, 45, -45, 55, -55, 60, -60];
+      const out = [];
+      const seen = new Set();
+      for (const a of raw) {
+        const d = Math.round(a / 5) * 5;
+        if (Math.abs(d) > 62) continue;
+        if (seen.has(d)) continue;
+        seen.add(d);
+        out.push(d);
+      }
+      return out;
+    }
+
+    function plateScore(p) {
+      if (!p) return -1;
+      let s = (p.ocr_confidence || 0) + (p.source === "yolo" ? 0.18 : 0);
+      if (usablePlate(p)) s += 0.2;
+      return s;
+    }
+
+    function sampleRgba(img, maxSide) {
+      const scale = maxSide / Math.max(1, img.width, img.height);
+      const w = Math.max(32, Math.round(img.width * scale));
+      const h = Math.max(32, Math.round(img.height * scale));
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(img, 0, 0, w, h);
+      return { w, h, data: ctx.getImageData(0, 0, w, h).data };
+    }
+
+    function inspectCapture(img) {
+      const { w, h, data } = sampleRgba(img, 300);
+      const reasons = [];
+      let score = 0;
+      const pix = (x, y) => (y * w + x) * 4;
+      const Yof = (x, y) => {
+        const i = pix(Math.max(0, Math.min(w - 1, x)), Math.max(0, Math.min(h - 1, y)));
+        return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      };
+      function stripStats(x0, y0, x1, y1) {
+        let n = 0, dark = 0, sum = 0, sum2 = 0;
+        x0 = Math.max(0, x0); y0 = Math.max(0, y0);
+        x1 = Math.min(w, x1); y1 = Math.min(h, y1);
+        for (let y = y0; y < y1; y++) {
+          for (let x = x0; x < x1; x++) {
+            const Y = Yof(x, y);
+            n++;
+            sum += Y;
+            sum2 += Y * Y;
+            if (Y < 42) dark++;
+          }
+        }
+        const mean = sum / Math.max(1, n);
+        return { fracDark: dark / Math.max(1, n), mean, std: Math.sqrt(Math.max(0, sum2 / Math.max(1, n) - mean * mean)) };
+      }
+      const bw = Math.max(3, Math.round(w * 0.07));
+      const bh = Math.max(3, Math.round(h * 0.07));
+      const L = stripStats(0, 0, bw, h);
+      const R = stripStats(w - bw, 0, w, h);
+      const Tp = stripStats(0, 0, w, bh);
+      const Bt = stripStats(0, h - bh, w, h);
+      const inner = stripStats(bw, bh, w - bw, h - bh);
+      const bezelMean = (L.mean + R.mean + Tp.mean + Bt.mean) / 4;
+      const darkSides = [L, R, Tp, Bt].filter((s) => s.fracDark > 0.42 && s.mean < 55 && s.std < 52).length;
+      if (darkSides >= 3 && inner.mean > bezelMean + 28) {
+        score += 0.5;
+        reasons.push("device_bezel");
+      } else if (darkSides === 2 && inner.mean > bezelMean + 22) {
+        score += 0.22;
+        reasons.push("partial_bezel");
+      }
+
+      function rectEdge(x0, y0, x1, y1) {
+        let e = 0, n = 0;
+        const step = 2;
+        for (let x = x0; x < x1; x += step) {
+          e += Math.abs(Yof(x, y0) - Yof(x, y0 + 3));
+          e += Math.abs(Yof(x, y1 - 1) - Yof(x, y1 - 4));
+          n += 2;
+        }
+        for (let y = y0; y < y1; y += step) {
+          e += Math.abs(Yof(x0, y) - Yof(x0 + 3, y));
+          e += Math.abs(Yof(x1 - 1, y) - Yof(x1 - 4, y));
+          n += 2;
+        }
+        return e / Math.max(1, n);
+      }
+      let bestFrame = 0;
+      for (const m of [0.06, 0.09, 0.13, 0.18, 0.24]) {
+        const x0 = Math.round(w * m), y0 = Math.round(h * m);
+        const x1 = w - x0, y1 = h - y0;
+        if (x1 - x0 < 24 || y1 - y0 < 24) continue;
+        const peri = rectEdge(x0, y0, x1, y1);
+        const inn = rectEdge(x0 + 6, y0 + 6, x1 - 6, y1 - 6);
+        const ratio = peri / (inn + 0.8);
+        if (ratio > bestFrame) bestFrame = ratio;
+      }
+      if (bestFrame > 2.4) {
+        score += 0.35;
+        reasons.push("nested_frame");
+      } else if (bestFrame > 1.9) {
+        score += 0.15;
+        reasons.push("weak_frame");
+      }
+
+      let light = 0, greenRuns = 0, blackRuns = 0, nPix = w * h;
+      const yMid = Math.floor(h * 0.40);
+      for (let y = 0; y < h; y++) {
+        let runG = 0, runK = 0;
+        for (let x = 0; x < w; x++) {
+          const i = pix(x, y);
+          const r = data[i], g = data[i + 1], b = data[i + 2];
+          const Y = 0.299 * r + 0.587 * g + 0.114 * b;
+          if (Y > 210) light++;
+          const green = g > 140 && g > r + 35 && g > b + 35 && r < 90 && b < 110;
+          const black = Y < 32 && Math.abs(r - g) < 14 && Math.abs(g - b) < 14;
+          if (y >= yMid) {
+            if (green) runG++;
+            else {
+              if (runG >= 10 && runG <= 100) greenRuns++;
+              runG = 0;
+            }
+            if (black) runK++;
+            else {
+              if (runK >= 10 && runK <= 100) blackRuns++;
+              runK = 0;
+            }
+          }
+        }
+        if (runG >= 10 && runG <= 100) greenRuns++;
+        if (runK >= 10 && runK <= 100) blackRuns++;
+      }
+      const lightFrac = light / nPix;
+      if (greenRuns >= 1 && blackRuns >= 1 && lightFrac > 0.18) {
+        score += 0.45;
+        reasons.push("ui_buttons");
+      }
+      if (lightFrac > 0.42 && bestFrame > 1.6) {
+        score += 0.2;
+        reasons.push("ui_canvas");
+      }
+
+      return {
+        picture_in_picture: score >= 0.55,
+        score: +score.toFixed(3),
+        reasons,
+      };
+    }
+
+    async function recognize(img) {
+      const cap = inspectCapture(img);
+      if (cap.picture_in_picture) {
+        return {
+          plates: [{
+            plate: "",
+            raw_ocr: "",
+            plate_type: "INVALID",
+            review_status: "reject",
+            confidence: 0,
+            note: "picture_in_picture",
+            capture: cap,
+          }],
+          view: img,
+        };
+      }
+      let best = null;
+      let view = img;
+      let usedDeg = 0;
+      for (const deg of deskewAngles(img)) {
+        const im = deg ? rotateImage(img, -deg) : img;
+        const rec = await recognizeOnce(im);
+        if (!rec) continue;
+        if (strongPlate(rec)) {
+          rec.rotate_deg = deg;
+          return { plates: [rec], view: im };
+        }
+        if (plateScore(rec) > plateScore(best)) {
+          best = rec;
+          view = im;
+          usedDeg = deg;
+        }
+      }
+      if (!usablePlate(best)) {
+        for (const deg of [90, -90, 180]) {
+          const im = rotateImage(img, -deg);
+          const rec = await recognizeOnce(im);
+          if (!rec) continue;
+          if (strongPlate(rec)) {
+            rec.rotate_deg = deg;
+            return { plates: [rec], view: im };
+          }
+          if (plateScore(rec) > plateScore(best)) {
+            best = rec;
+            view = im;
+            usedDeg = deg;
+          }
+        }
+      }
+      if (!best) return { plates: [], view: img };
+      if (usedDeg) best.rotate_deg = usedDeg;
+      return { plates: [best], view };
     }
 
     function showPlates(plates) {
       const el = $("plate");
       const top = plates[0];
-      el.classList.remove("miss", "unsupported", "gov", "special");
+      el.classList.remove("miss", "unsupported", "gov", "special", "invalid");
       if (!top) {
         el.textContent = "No plate found";
         el.classList.add("miss");
-        $("summary").textContent = "No plate box was found, so nothing was guessed from the whole photo. Move closer or crop to the plate (two-line MC / bajaji plates especially).";
+        $("summary").textContent = "No plate box was found. Tilted phone photos are deskewed automatically — if it still misses, crop closer to the plate.";
         $("json").textContent = "[]";
+        return;
+      }
+      if (top.plate_type === "INVALID") {
+        el.classList.add("invalid");
+        el.textContent = "Not a live vehicle photo";
+        $("summary").innerHTML =
+          "<strong>Type:</strong> invalid" +
+          " &nbsp; <strong>Route:</strong> reject" +
+          "<br>This looks like a screenshot or a photo of another picture (phone, print, or screen). Upload the original photo of the vehicle." +
+          (top.capture && top.capture.reasons ? "<br>Signals: <code>" + top.capture.reasons.join(", ") + "</code>" : "");
+        $("json").textContent = JSON.stringify(plates, null, 2);
         return;
       }
       if (top.plate_type === "UNSUPPORTED" || top.plate_type === "UNKNOWN") {
@@ -767,19 +1272,40 @@
       $("json").textContent = JSON.stringify(plates, null, 2);
     }
 
+    let running = false;
+
+    function setReading(on) {
+      running = on;
+      runBtn.disabled = on || !yoloSess || !currentImg;
+      runBtn.classList.toggle("loading", on);
+      runBtn.setAttribute("aria-busy", on ? "true" : "false");
+      runBtn.textContent = on ? "Reading…" : "Read plate";
+      document.querySelectorAll(".ex").forEach((b) => { b.disabled = on; });
+    }
+
     async function run() {
-      if (!currentImg || !ocrSess) return;
-      runBtn.disabled = true;
+      if (!currentImg || !ocrSess || running) return;
+      setReading(true);
       $("summary").textContent = "Reading plate…";
+      $("plate").textContent = "…";
+      $("plate").classList.remove("miss", "unsupported", "gov", "special", "invalid");
       try {
-        const plates = await recognize(currentImg);
-        drawResults(currentImg, plates);
+        let { plates, view } = await recognize(currentImg);
+        const deg = plates[0] && plates[0].rotate_deg;
+        if (deg && Math.abs(deg) < 70 && view && currentImg && (view.width !== currentImg.width || view.height !== currentImg.height)) {
+          const fitted = deskewCoverView(currentImg, view, deg, plates);
+          view = fitted.view;
+          plates = fitted.plates;
+        }
+        drawResults(view || currentImg, plates);
         showPlates(plates);
       } catch (err) {
         $("summary").textContent = "Read failed: " + err.message;
+        $("plate").textContent = "Read failed";
+        $("plate").classList.add("miss");
         console.error(err);
       }
-      runBtn.disabled = !yoloSess;
+      setReading(false);
     }
 
     function setImage(img) {
@@ -789,22 +1315,41 @@
       vis.hidden = false;
       hint.hidden = true;
       vis.getContext("2d").drawImage(img, 0, 0);
+      runBtn.disabled = !yoloSess;
       if (yoloSess) run();
     }
 
     function loadFromUrl(url) {
+      fetch(url)
+        .then((r) => {
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.blob();
+        })
+        .then((blob) => loadBlob(blob))
+        .catch(() => { $("summary").textContent = "Could not load " + url; });
+    }
+
+    async function loadBlob(blob) {
+      if (typeof createImageBitmap === "function") {
+        try {
+          const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
+          const c = document.createElement("canvas");
+          c.width = bmp.width;
+          c.height = bmp.height;
+          c.getContext("2d").drawImage(bmp, 0, 0);
+          setImage(c);
+          return;
+        } catch (_) { /* fall through to Image() */ }
+      }
       const img = new Image();
       img.onload = () => setImage(img);
-      img.onerror = () => { $("summary").textContent = "Could not load " + url; };
-      img.src = url;
+      img.src = URL.createObjectURL(blob);
     }
 
     file.addEventListener("change", () => {
       const f = file.files && file.files[0];
       if (!f) return;
-      const img = new Image();
-      img.onload = () => setImage(img);
-      img.src = URL.createObjectURL(f);
+      loadBlob(f);
     });
     drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("drag"); });
     drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
@@ -813,9 +1358,7 @@
       drop.classList.remove("drag");
       const f = e.dataTransfer.files && e.dataTransfer.files[0];
       if (!f) return;
-      const img = new Image();
-      img.onload = () => setImage(img);
-      img.src = URL.createObjectURL(f);
+      loadBlob(f);
     });
     runBtn.addEventListener("click", (e) => { e.preventDefault(); run(); });
     $("clear").addEventListener("click", () => {
@@ -823,10 +1366,12 @@
       vis.hidden = true;
       hint.hidden = false;
       $("plate").textContent = "—";
-      $("plate").classList.remove("miss", "unsupported", "gov", "special");
+      $("plate").classList.remove("miss", "unsupported", "gov", "special", "invalid");
       $("summary").textContent = "Upload a photo after the models finish loading.";
       $("json").textContent = "[]";
       file.value = "";
+      setReading(false);
+      runBtn.disabled = true;
     });
     document.querySelectorAll(".ex").forEach((btn) => {
       btn.addEventListener("click", (e) => {

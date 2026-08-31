@@ -17,6 +17,8 @@ import pytest
         ("SM11736", "SM11736", "GOVERNMENT"),
         ("DFPA 2925", "DFPA2925", "SPECIAL"),
         ("DFPA2925", "DFPA2925", "SPECIAL"),
+        ("MCC 0419", "MCC0419", "GOVERNMENT"),
+        ("MCC1455", "MCC1455", "GOVERNMENT"),
     ],
 )
 def test_normalize_and_classify(tz_rules, raw, expected_norm, expected_type):
