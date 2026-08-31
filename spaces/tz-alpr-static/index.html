@@ -789,7 +789,7 @@
 
     function coerceDigits(s) {
       return s.replace(/O/g, "0").replace(/D/g, "0").replace(/Q/g, "0")
-        .replace(/I/g, "1").replace(/L/g, "1").replace(/S/g, "5");
+        .replace(/I/g, "1").replace(/L/g, "1");
     }
 
     function coerceLetters(s) {
@@ -952,24 +952,6 @@
       return /^T\d{2,3}$/.test(t) || /^MC\d{2,3}$/.test(t);
     }
 
-    function digitsFromBandTop(top) {
-      let t = (top || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-      if (t[0] === "T") t = "T" + coerceDigits(t.slice(1));
-      else t = coerceDigits(t);
-      if (/^T\d{3}$/.test(t)) return t.slice(1);
-      if (/^\d{3}$/.test(t)) return t;
-      return "";
-    }
-
-    function applyBandDigits(rec, cands) {
-      if (!rec || rec.plate_type !== "PRIVATE" || (rec.plate || "").length !== 7) return rec;
-      const band = cands.find((c) => c.mode === "bands" && c.band_top && sameBox(c, rec));
-      if (!band) return rec;
-      const digits = digitsFromBandTop(band.band_top);
-      if (!digits || rec.plate.slice(1, 4) === digits) return rec;
-      return { ...rec, plate: "T" + digits + rec.plate.slice(4), note: "digits from top line" };
-    }
-
     async function bestFromBoxes(img, boxes, minOcr) {
       const cands = [];
       for (const raw of boxes) {
@@ -979,11 +961,7 @@
         for (const b of [raw, padded]) {
           for (const mode of modes) {
             const rec = await scoreBox(img, b, mode, minOcr);
-            if (!rec) continue;
-            cands.push(rec);
-            if (rec.source === "yolo" && rec.mode !== "bands" && trainedType(rec.plate_type) && rec.ocr_confidence >= 0.78) {
-              return applyBandDigits(rec, cands);
-            }
+            if (rec) cands.push(rec);
           }
         }
       }
@@ -996,13 +974,13 @@
       if (trained[0] && trained[0].ocr_confidence >= 0.55) {
         const bandHits = cands.filter((c) => c.mode === "bands" && trainedType(c.plate_type) && looksLikeTwoLineTop(c.band_top));
         bandHits.sort((a, b) => b.ocr_confidence - a.ocr_confidence);
-        if (bandHits[0] && bandHits[0].plate !== trained[0].plate && trained[0].ocr_confidence < 0.80) return bandHits[0];
+        if (bandHits[0] && bandHits[0].plate !== trained[0].plate) return bandHits[0];
         const band = cands.find((c) => c.mode === "bands" && c.band_top && sameBox(c, trained[0]));
         if (trainedType(trained[0].plate_type) && band && topLooksGov(band.band_top)) {
           if (otherKnownType(band.plate_type)) return band;
           return asUnsupported(band, "top line is not T/MC — private T-plate discarded");
         }
-        return applyBandDigits(trained[0], cands);
+        return trained[0];
       }
       const uns = cands.find((c) => c.plate_type === "UNSUPPORTED") || trained[0] || cands[0];
       return asUnsupported(uns);
@@ -1014,19 +992,20 @@
 
     function strongPlate(p) {
       if (!usablePlate(p)) return false;
-      if (p.source === "yolo" && p.mode !== "bands" && p.ocr_confidence >= 0.70) return true;
+      const twoLine = p.bbox && (p.bbox[2] / Math.max(1, p.bbox[3]) < 2.8);
+      if (twoLine && p.mode !== "bands" && (p.ocr_confidence || 0) < 0.94) return false;
+      if (p.source === "yolo" && p.ocr_confidence >= 0.80) return true;
       if (p.source !== "yolo" && p.ocr_confidence >= 0.92) return true;
       return false;
     }
 
     async function recognizeOnce(img) {
       let boxes = await yoloOnImage(img, 0, 0);
-      if (!boxes.length) {
-        const yOff = Math.floor(img.height * 0.38);
-        if (yOff > 40) {
-          const low = cropCanvas(img, 0, yOff, img.width, img.height);
-          boxes = boxes.concat(await yoloOnImage(low, 0, yOff));
-        }
+      const yOff = Math.floor(img.height * 0.38);
+      if (yOff > 40) {
+        const low = cropCanvas(img, 0, yOff, img.width, img.height);
+        const extra = await yoloOnImage(low, 0, yOff);
+        boxes = boxes.concat(extra);
       }
       let best = await bestFromBoxes(img, boxes, 0.35);
       if (!usablePlate(best)) {
@@ -1041,26 +1020,19 @@
       return best && best.plate_type !== "UNKNOWN" ? best : null;
     }
 
-    function uniqueAngles(raw, maxAbs) {
+    function deskewAngles(img) {
+      const tilt = estimateTiltDeg(img);
+      const raw = [0, tilt, tilt + 15, tilt - 15, 30, -30, 40, -40, 20, -20, 45, -45, 55, -55, 60, -60];
       const out = [];
       const seen = new Set();
       for (const a of raw) {
         const d = Math.round(a / 5) * 5;
-        if (Math.abs(d) > maxAbs) continue;
+        if (Math.abs(d) > 62) continue;
         if (seen.has(d)) continue;
         seen.add(d);
         out.push(d);
       }
       return out;
-    }
-
-    function deskewQuick(img) {
-      const tilt = estimateTiltDeg(img);
-      return uniqueAngles([0, tilt, tilt + 12, tilt - 12], 25);
-    }
-
-    function deskewExtra(img) {
-      return uniqueAngles([30, -30, 45, -45], 50);
     }
 
     function plateScore(p) {
@@ -1220,9 +1192,23 @@
       let best = null;
       let view = img;
       let usedDeg = 0;
-      async function tryDegs(degs) {
-        for (const deg of degs) {
-          const im = deg ? rotateImage(img, -deg) : img;
+      for (const deg of deskewAngles(img)) {
+        const im = deg ? rotateImage(img, -deg) : img;
+        const rec = await recognizeOnce(im);
+        if (!rec) continue;
+        if (strongPlate(rec)) {
+          rec.rotate_deg = deg;
+          return { plates: [rec], view: im };
+        }
+        if (plateScore(rec) > plateScore(best)) {
+          best = rec;
+          view = im;
+          usedDeg = deg;
+        }
+      }
+      if (!usablePlate(best)) {
+        for (const deg of [90, -90, 180]) {
+          const im = rotateImage(img, -deg);
           const rec = await recognizeOnce(im);
           if (!rec) continue;
           if (strongPlate(rec)) {
@@ -1235,19 +1221,6 @@
             usedDeg = deg;
           }
         }
-        return null;
-      }
-      const quick = await tryDegs(deskewQuick(img));
-      if (quick) return quick;
-      if (usablePlate(best)) {
-        if (usedDeg) best.rotate_deg = usedDeg;
-        return { plates: [best], view };
-      }
-      const extra = await tryDegs(deskewExtra(img));
-      if (extra) return extra;
-      if (!best) {
-        const side = await tryDegs([90, -90]);
-        if (side) return side;
       }
       if (!best) return { plates: [], view: img };
       if (usedDeg) best.rotate_deg = usedDeg;
@@ -1335,27 +1308,13 @@
       setReading(false);
     }
 
-    function fitMaxSide(img, maxSide) {
-      const m = Math.max(img.width, img.height);
-      if (m <= maxSide) return img;
-      const s = maxSide / m;
-      const c = document.createElement("canvas");
-      c.width = Math.max(1, Math.round(img.width * s));
-      c.height = Math.max(1, Math.round(img.height * s));
-      const ctx = c.getContext("2d");
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = "high";
-      ctx.drawImage(img, 0, 0, c.width, c.height);
-      return c;
-    }
-
     function setImage(img) {
-      currentImg = fitMaxSide(img, 1280);
-      vis.width = currentImg.width;
-      vis.height = currentImg.height;
+      currentImg = img;
+      vis.width = img.width;
+      vis.height = img.height;
       vis.hidden = false;
       hint.hidden = true;
-      vis.getContext("2d").drawImage(currentImg, 0, 0);
+      vis.getContext("2d").drawImage(img, 0, 0);
       runBtn.disabled = !yoloSess;
       if (yoloSess) run();
     }
